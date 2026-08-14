@@ -1,0 +1,474 @@
+"use client";
+
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import MiniGamesPage, { BonusGameId } from "./MiniGames";
+
+type View = "dashboard" | "guide" | "missions" | "bonus" | "history" | "complete" | "admin";
+type Role = "USER" | "ADMIN";
+type User = { name: string; cedula: string; phone: string; email: string; cargo: string; uad: string; avatar: string; role: Role };
+type Mission = { id: number; station: string; icon: string; color: string; title: string; description: string; points: number; audience: string; duration: string };
+type AvatarConfig = { skin: number; hair: number; style: number; shirt: number; accessory: number };
+type PersonProgress = { name: string; uad: string; completed: number; total: number; points: number };
+type SessionBundle = { user: User; missions: Mission[]; historyMissions?: Mission[]; completed: number[]; started?: number[]; history?: Record<number, string>; adminPeople?: PersonProgress[]; bonusCompleted?: string[]; bonusScores?: Record<string, number>; token: string };
+
+const stations = [
+  { name: "Estación Diversidad", icon: "◉", color: "#9d5cff" },
+  { name: "Estación Felicidad", icon: "♡", color: "#ffb703" },
+  { name: "Estación Seguridad", icon: "◇", color: "#12cfe0" },
+  { name: "Estación Salud", icon: "+", color: "#43d17d" },
+  { name: "Estación Amor Propio", icon: "✦", color: "#ff5c9b" },
+  { name: "Estación Ambiental", icon: "♧", color: "#8bd33f" },
+];
+
+const missionsSeed: Mission[] = [
+  { id: 1, station: "Estación Diversidad", icon: "◉", color: "#9d5cff", title: "Todos contamos", description: "Participa en el reto de inclusión y reconoce una fortaleza única de otro compañero.", points: 120, audience: "Todas las UAD", duration: "8 min" },
+  { id: 2, station: "Estación Felicidad", icon: "♡", color: "#ffb703", title: "La pausa que suma", description: "Completa la dinámica de gratitud y deja un mensaje positivo en la estación.", points: 100, audience: "Todas las UAD", duration: "6 min" },
+  { id: 3, station: "Estación Seguridad", icon: "◇", color: "#12cfe0", title: "Cazadores de riesgos", description: "Identifica tres condiciones seguras dentro del recorrido y valida tu respuesta con el guía.", points: 150, audience: "Sede Central", duration: "10 min" },
+  { id: 4, station: "Estación Salud", icon: "+", color: "#43d17d", title: "Pulso saludable", description: "Acepta el reto de hábitos saludables y registra el compromiso que aplicarás esta semana.", points: 100, audience: "Todas las UAD", duration: "7 min" },
+  { id: 5, station: "Estación Amor Propio", icon: "✦", color: "#ff5c9b", title: "Mi mejor versión", description: "Elige una práctica de autocuidado y completa la actividad guiada de bienestar emocional.", points: 130, audience: "Todas las UAD", duration: "9 min" },
+  { id: 6, station: "Estación Ambiental", icon: "♧", color: "#8bd33f", title: "Huella consciente", description: "Clasifica correctamente los residuos del desafío y descubre tu eco-acción diaria.", points: 110, audience: "Sede Central", duration: "8 min" },
+];
+
+const skinTones = ["#f8d5c2", "#efbd9f", "#d89572", "#a96848", "#70402f", "#3f251f"];
+const hairColors = ["#241914", "#5b3426", "#b66d2e", "#e0b34f", "#7c355d", "#284d78", "#d8d4ce"];
+const hairStyles = [
+  { id: "short", label: "Corto" },
+  { id: "medium", label: "Medio" },
+  { id: "long", label: "Largo" },
+  { id: "curly", label: "Rizado" },
+  { id: "bun", label: "Recogido" },
+  { id: "waves", label: "Ondulado" },
+  { id: "braids", label: "Trenzas" },
+];
+const shirtColors = ["#7d4de8", "#08aabb", "#ef4d86", "#f39b17", "#3da868", "#264d87", "#df4949", "#ffffff"];
+const accessories = [
+  { id: "none", label: "Sin accesorio", icon: "×" },
+  { id: "glasses", label: "Gafas", icon: "▢" },
+  { id: "round-glasses", label: "Gafas redondas", icon: "∞" },
+  { id: "headband", label: "Diadema", icon: "⌒" },
+  { id: "bow", label: "Moño", icon: "⋈" },
+  { id: "earrings", label: "Aretes", icon: "••" },
+  { id: "flower", label: "Flor", icon: "✿" },
+  { id: "cap", label: "Gorra", icon: "⌁" },
+];
+const defaultAvatar = "avatar:v1:2:0:1:0:0";
+const cargos = ["Auxiliar administrativo", "Profesional asistencial", "Líder de proceso", "Coordinador(a)", "Analista", "Otro"];
+const uads = ["Sede Central", "UAD Duitama", "UAD Chiquinquirá", "UAD Miraflores", "UAD Guateque"];
+const demoUser: User = { name: "Valentina Segura", cedula: "1010101010", phone: "300 555 0198", email: "valentina@empresa.com", cargo: "Profesional asistencial", uad: "Sede Central", avatar: defaultAvatar, role: "USER" };
+const demoPeople = [
+  { name: "Valentina Segura", uad: "Sede Central", completed: 4, total: 6, points: 470 },
+  { name: "Samuel Torres", uad: "UAD Duitama", completed: 6, total: 6, points: 710 },
+  { name: "Laura Moreno", uad: "UAD Chiquinquirá", completed: 3, total: 5, points: 350 },
+  { name: "Mateo Rojas", uad: "UAD Miraflores", completed: 2, total: 4, points: 220 },
+  { name: "Luna Castro", uad: "Sede Central", completed: 5, total: 6, points: 590 },
+];
+
+declare global {
+  interface Window { PASSPORT_CONFIG?: { apiUrl?: string } }
+}
+
+function getApiUrl() {
+  if (typeof window === "undefined") return "";
+  return window.PASSPORT_CONFIG?.apiUrl?.trim() || "";
+}
+
+async function callApi(action: string, payload: Record<string, unknown> = {}) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 20000);
+  try {
+    const response = await fetch(getApiUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action, ...payload }),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error("El servicio no respondió correctamente.");
+    const result = await response.json();
+    if (!result.ok) throw new Error(result.message || "No fue posible completar la solicitud.");
+    return result.data;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw new Error("La conexión tardó demasiado. Intenta nuevamente.");
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+function decodeAvatar(value: string): AvatarConfig {
+  if (!value?.startsWith("avatar:v1:")) return { skin: 2, hair: 0, style: 1, shirt: 0, accessory: 0 };
+  const values = value.replace("avatar:v1:", "").split(":").map(Number);
+  return {
+    skin: Math.min(Math.max(values[0] || 0, 0), skinTones.length - 1),
+    hair: Math.min(Math.max(values[1] || 0, 0), hairColors.length - 1),
+    style: Math.min(Math.max(values[2] || 0, 0), hairStyles.length - 1),
+    shirt: Math.min(Math.max(values[3] || 0, 0), shirtColors.length - 1),
+    accessory: Math.min(Math.max(values[4] || 0, 0), accessories.length - 1),
+  };
+}
+
+function encodeAvatar(config: AvatarConfig) {
+  return `avatar:v1:${config.skin}:${config.hair}:${config.style}:${config.shirt}:${config.accessory}`;
+}
+
+export default function Home() {
+  const [opened, setOpened] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [view, setView] = useState<View>("dashboard");
+  const [completed, setCompleted] = useState<number[]>([1, 2]);
+  const [started, setStarted] = useState<number[]>([3]);
+  const [stampMission, setStampMission] = useState<Mission | null>(null);
+  const [avatarOpen, setAvatarOpen] = useState(false);
+  const [avatarDraft, setAvatarDraft] = useState<AvatarConfig>(decodeAvatar(defaultAvatar));
+  const [missionFilter, setMissionFilter] = useState("Todas");
+  const [toast, setToast] = useState("");
+  const [missions, setMissions] = useState<Mission[]>(missionsSeed);
+  const [historyMissions, setHistoryMissions] = useState<Mission[]>(missionsSeed);
+  const [catalogs, setCatalogs] = useState({ cargos, uads });
+  const [sessionToken, setSessionToken] = useState("");
+  const [historyDates, setHistoryDates] = useState<Record<number, string>>({});
+  const [adminPeople, setAdminPeople] = useState(demoPeople);
+  const [pageDirection, setPageDirection] = useState<"next" | "prev">("next");
+  const [pageKey, setPageKey] = useState(0);
+  const [sessionOpening, setSessionOpening] = useState(false);
+  const [sessionClosing, setSessionClosing] = useState(false);
+  const [busyAction, setBusyAction] = useState("");
+  const [bonusCompleted, setBonusCompleted] = useState<string[]>([]);
+  const [bonusScores, setBonusScores] = useState<Record<string, number>>({});
+  const visibleMissions = useMemo(() => user ? missions.filter((m) => m.audience === "Todas las UAD" || m.audience === user.uad) : [], [missions, user]);
+  const filteredMissions = missionFilter === "Todas" ? visibleMissions : visibleMissions.filter((m) => m.station === missionFilter);
+  const completedVisible = visibleMissions.filter((m) => completed.includes(m.id));
+  const completedHistory = historyMissions.filter((m) => completed.includes(m.id));
+  const progress = visibleMissions.length ? Math.round((completedVisible.length / visibleMissions.length) * 100) : 0;
+  const points = completedVisible.reduce((sum, m) => sum + m.points, 0) + Object.values(bonusScores).reduce((sum, value) => sum + value, 0);
+  const viewOrder: View[] = ["dashboard", "guide", "missions", "bonus", "history", "complete", "admin"];
+
+  useEffect(() => {
+    if (!getApiUrl()) return;
+    const cachedCatalogs = localStorage.getItem("pasaporte_catalogs");
+    if (cachedCatalogs) {
+      try { setCatalogs(JSON.parse(cachedCatalogs)); } catch { localStorage.removeItem("pasaporte_catalogs"); }
+    }
+
+    callApi("catalogs").then((data) => {
+      setCatalogs(data);
+      localStorage.setItem("pasaporte_catalogs", JSON.stringify(data));
+    }).catch(() => {
+      if (!cachedCatalogs) notify("No fue posible cargar los catálogos. Se muestran opciones de ejemplo.");
+    });
+
+    const savedToken = localStorage.getItem("pasaporte_session");
+    if (savedToken) {
+      setBusyAction("restoring");
+      callApi("session", { token: savedToken })
+        .then((data) => applyBundle(data))
+        .catch(() => localStorage.removeItem("pasaporte_session"))
+        .finally(() => setBusyAction(""));
+    }
+  }, []);
+
+  function notify(message: string) { setToast(message); window.setTimeout(() => setToast(""), 2800); }
+  function applyBundle(data: SessionBundle) {
+    setUser(data.user);
+    setMissions(data.missions);
+    setHistoryMissions(data.historyMissions?.length ? data.historyMissions : data.missions);
+    setCompleted(data.completed || []);
+    setStarted(data.started || []);
+    setHistoryDates(data.history || {});
+    setAdminPeople(data.adminPeople || []);
+    setBonusCompleted(data.bonusCompleted || []);
+    setBonusScores(data.bonusScores || {});
+    setSessionToken(data.token);
+    localStorage.setItem("pasaporte_session", data.token);
+  }
+  function turnTo(next: View) {
+    if (next === view) return;
+    setPageDirection(viewOrder.indexOf(next) >= viewOrder.indexOf(view) ? "next" : "prev");
+    setView(next);
+    setPageKey((current) => current + 1);
+  }
+  function revealPassport(next: View) {
+    setView(next);
+    setSessionOpening(true);
+    window.setTimeout(() => setSessionOpening(false), 1050);
+  }
+  function openAvatarStudio() {
+    if (!user) return;
+    setAvatarDraft(decodeAvatar(user.avatar));
+    setAvatarOpen(true);
+  }
+  async function login(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const cedula = String(form.get("cedula") || "");
+    const password = String(form.get("password") || "");
+    setBusyAction("login");
+    try {
+      if (getApiUrl()) {
+        const data = await callApi("login", { cedula, password });
+        applyBundle(data);
+      } else if (cedula === "1000000000" && password === "Demo1234*") setUser({ ...demoUser, name: "Administrador Festival", cedula, email: "admin@empresa.com", role: "ADMIN", avatar: "avatar:v1:3:1:0:5:1" });
+      else if (cedula && password) setUser({ ...demoUser, cedula });
+      revealPassport("dashboard");
+    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible iniciar sesión."); }
+    finally { setBusyAction(""); }
+  }
+  async function register(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const newUser = { name: String(form.get("name") || "Nuevo participante"), cedula: String(form.get("cedula") || ""), phone: String(form.get("phone") || ""), email: String(form.get("email") || ""), cargo: String(form.get("cargo") || catalogs.cargos[0]), uad: String(form.get("uad") || catalogs.uads[0]), avatar: defaultAvatar, role: "USER" as Role };
+    setBusyAction("register");
+    try {
+      if (getApiUrl()) {
+        const data = await callApi("register", { user: newUser, password: String(form.get("password") || "") });
+        applyBundle(data);
+      } else setUser(newUser);
+      setCompleted([]); setStarted([]); revealPassport("guide"); notify("¡Registro exitoso! Tu pasaporte está listo.");
+    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible crear el pasaporte."); }
+    finally { setBusyAction(""); }
+  }
+  async function startMission(id: number) {
+    if (busyAction) return;
+    const previous = started;
+    setStarted((current) => current.includes(id) ? current : [...current, id]);
+    setBusyAction(`start-${id}`);
+    try {
+      if (getApiUrl()) await callApi("startMission", { token: sessionToken, missionId: id });
+      notify("Misión iniciada. ¡Busca la estación!");
+    } catch (error) {
+      setStarted(previous);
+      notify(error instanceof Error ? error.message : "No fue posible iniciar la misión.");
+    } finally { setBusyAction(""); }
+  }
+  async function finishMission(mission: Mission) {
+    if (busyAction) return;
+    setBusyAction(`finish-${mission.id}`);
+    try {
+      if (getApiUrl()) await callApi("completeMission", { token: sessionToken, missionId: mission.id });
+      setCompleted((current) => current.includes(mission.id) ? current : [...current, mission.id]);
+      setHistoryMissions((current) => current.some((item) => item.id === mission.id) ? current : [...current, mission]);
+      setHistoryDates((current) => ({ ...current, [mission.id]: new Date().toISOString() }));
+      setStarted((current) => current.filter((id) => id !== mission.id));
+      setStampMission(mission);
+    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible completar la misión."); }
+    finally { setBusyAction(""); }
+  }
+  async function createAdminMission(mission: Mission) {
+    setBusyAction("create-mission");
+    try {
+      let created = mission;
+      if (getApiUrl()) {
+        const data = await callApi("adminCreateMission", { token: sessionToken, mission });
+        created = { ...mission, id: data.id };
+      }
+      setMissions((current) => [...current, created]);
+      notify("Misión creada y publicada correctamente.");
+      return true;
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "No fue posible publicar la misión.");
+      return false;
+    } finally { setBusyAction(""); }
+  }
+  async function deleteAdminMission(mission: Mission) {
+    const previous = missions;
+    setMissions((current) => current.filter((item) => item.id !== mission.id));
+    setBusyAction(`delete-${mission.id}`);
+    try {
+      if (getApiUrl()) await callApi("adminDeleteMission", { token: sessionToken, missionId: mission.id });
+      notify("Misión eliminada. El historial anterior se conservó.");
+      return true;
+    } catch (error) {
+      setMissions(previous);
+      notify(error instanceof Error ? error.message : "No fue posible eliminar la misión.");
+      return false;
+    } finally { setBusyAction(""); }
+  }
+  async function saveAvatar() {
+    if (!user || busyAction) return;
+    const avatar = encodeAvatar(avatarDraft);
+    setBusyAction("avatar");
+    try {
+      if (getApiUrl()) await callApi("updateAvatar", { token: sessionToken, avatar });
+      setUser({ ...user, avatar });
+      setAvatarOpen(false);
+      notify("Avatar actualizado.");
+    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible actualizar el avatar."); }
+    finally { setBusyAction(""); }
+  }
+  async function completeBonus(gameId: BonusGameId, score: number) {
+    if (bonusCompleted.includes(gameId) || busyAction) return;
+    setBusyAction(`bonus-${gameId}`);
+    try {
+      if (getApiUrl()) await callApi("completeBonus", { token: sessionToken, gameId, score });
+      setBonusCompleted((current) => current.includes(gameId) ? current : [...current, gameId]);
+      setBonusScores((current) => ({ ...current, [gameId]: score }));
+      notify(`¡Bonus completado! Sumaste ${score} puntos.`);
+    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible guardar el bonus."); }
+    finally { setBusyAction(""); }
+  }
+  function closeStamp() { const allDone = visibleMissions.length > 0 && completedVisible.length >= visibleMissions.length; setStampMission(null); if (allDone) turnTo("complete"); }
+  function logout() {
+    if (sessionClosing) return;
+    setSessionClosing(true);
+    window.setTimeout(() => {
+      localStorage.removeItem("pasaporte_session");
+      setSessionToken(""); setUser(null); setOpened(false); setView("dashboard");
+      setBonusCompleted([]); setBonusScores({}); setSessionClosing(false);
+    }, 900);
+  }
+
+  return <main className="app-shell">
+    <div className="aurora aurora-one" /><div className="aurora aurora-two" />
+    {!opened && <section className="cover-stage" aria-label="Portada del Pasaporte Seguro">
+      <div className="book-cover clean-cover"><span className="cover-spine" /><span className="cover-foil" /><div className="cover-brands"><img className="cover-company-logo" src="./assets/jer-logo.webp" alt="JER Une tus sueños" /><span>Una experiencia apoyada por</span><img className="cover-program-logo" src="./assets/de-mi-para-mi.webp" alt="Programa De mí para mí" /></div><p className="eyebrow">SEMANA DE LA SEGURIDAD Y SALUD EN EL TRABAJO</p>
+        <h1>PASAPORTE<span>DE LA <i className="purple">DIVERSIDAD</i>,</span><span>LA <i className="yellow">FELICIDAD</i>,</span><span>LA <i className="cyan">SEGURIDAD</i></span><span>LA <i className="green">SALUD</i> Y</span><span>EL <i className="pink">CUIDADO</i></span><span className="small-title">EN EL TRABAJO</span></h1>
+        <div className="cover-color-line" aria-hidden="true">{stations.map((station) => <i key={station.name} style={{ background: station.color }} />)}</div><p className="festival">FESTIVAL 2026</p><p className="motto">DIFERENTES EN DISTANCIA · ÚNICOS EN HISTORIA · JUNTOS EN PROPÓSITO</p><button className="primary-button cover-button" onClick={() => setOpened(true)}>{user ? "Volver a mi pasaporte" : "Abrir mi pasaporte"} <UiIcon name="arrow" /></button>
+      </div><p className="hint">Toca la portada para comenzar tu recorrido</p>
+    </section>}
+
+    {opened && !user && <section className="auth-stage"><div className="auth-book"><aside className="auth-visual"><p className="mini-kicker">FESTIVAL 2026</p><div className="passport-mark">P</div><h2>Tu ruta segura comienza aquí.</h2><p>Regístrate, visita las estaciones y colecciona cada sello del festival.</p><div className="mini-route">{stations.map((s) => <span key={s.name} style={{ background: s.color }}><StationIcon station={s.name} /></span>)}</div></aside>
+      <div className="auth-form-side"><div className="auth-switch" role="tablist"><button className={authMode === "login" ? "active" : ""} onClick={() => setAuthMode("login")}>Iniciar sesión</button><button className={authMode === "register" ? "active" : ""} onClick={() => setAuthMode("register")}>Crear pasaporte</button></div>
+        {authMode === "login" ? <form className="passport-form" onSubmit={login}><p className="step-label">BIENVENIDO DE NUEVO</p><h2>Continúa tu recorrido</h2><label>Número de cédula<input name="cedula" inputMode="numeric" placeholder="Ej. 1010101010" required /></label><label>Contraseña<input name="password" type="password" placeholder="Tu contraseña" required /></label><button className="primary-button" type="submit" disabled={busyAction === "login"}>{busyAction === "login" ? <><LoadingDot /> Verificando...</> : <>Ingresar al pasaporte <UiIcon name="arrow" /></>}</button>{!getApiUrl() && <p className="demo-note">Demostración administrador: <b>1000000000</b> / <b>Demo1234*</b></p>}</form>
+        : <form className="passport-form register-grid" onSubmit={register}><div className="form-heading"><p className="step-label">NUEVO VIAJERO</p><h2>Crea tu pasaporte</h2></div><label className="wide">Nombre completo<input name="name" placeholder="Nombres y apellidos" required /></label><label>Número de cédula<input name="cedula" inputMode="numeric" placeholder="Sin puntos" required /></label><label>Número de teléfono<input name="phone" type="tel" placeholder="300 000 0000" required /></label><label className="wide">Correo electrónico<input name="email" type="email" placeholder="nombre@empresa.com" required /></label><label>Cargo<select name="cargo">{catalogs.cargos.map((x) => <option key={x}>{x}</option>)}</select></label><label>UAD<select name="uad">{catalogs.uads.map((x) => <option key={x}>{x}</option>)}</select></label><label className="wide">Contraseña<input name="password" type="password" minLength={8} placeholder="Mínimo 8 caracteres" required /></label><button className="primary-button wide" type="submit" disabled={busyAction === "register"}>{busyAction === "register" ? <><LoadingDot /> Creando...</> : <>Crear mi pasaporte <UiIcon name="arrow" /></>}</button></form>}
+      </div></div></section>}
+
+    {opened && user && <section className={`passport-stage ${sessionOpening ? "session-opening" : ""} ${sessionClosing ? "session-closing" : ""}`}><nav className="page-tabs" aria-label="Secciones del pasaporte"><Tab label="Tablero" icon="home" active={view === "dashboard"} onClick={() => turnTo("dashboard")} /><Tab label="Cómo usarlo" icon="help" active={view === "guide"} onClick={() => turnTo("guide")} /><Tab label="Misiones" icon="compass" active={view === "missions"} onClick={() => turnTo("missions")} /><Tab label="Bonus" icon="gamepad" active={view === "bonus"} onClick={() => turnTo("bonus")} /><Tab label="Historial" icon="history" active={view === "history"} onClick={() => turnTo("history")} />{user.role === "ADMIN" && <Tab label="Administrar" icon="settings" active={view === "admin"} onClick={() => turnTo("admin")} />}</nav>
+      <div className="passport-book"><span className="book-binding" aria-hidden="true" /><header className="passport-header"><div className="brand-lockup"><div className="brand-p">P</div><div><b>PASAPORTE SEGURO</b><small>FESTIVAL 2026</small></div></div><img className="header-program-logo" src="./assets/de-mi-para-mi.webp" alt="De mí para mí" /><div className="header-actions"><button className="cover-return" onClick={() => setOpened(false)} aria-label="Regresar a la portada"><UiIcon name="cover" /><span>Portada</span></button><div className="profile-chip"><AvatarPortrait value={user.avatar} size="tiny" /><div><b>{user.name}</b><small>{user.uad}</small></div><button onClick={logout} aria-label="Cerrar sesión" title="Cerrar sesión"><UiIcon name="logout" /></button></div></div></header>
+        <div className={`page-sheet turn-${pageDirection}`} key={`${view}-${pageKey}`}>
+        {view === "dashboard" && <div className="page-content dashboard-page"><div className="welcome-copy"><p className="step-label">TABLERO DE VIAJE</p><h2>¡Hola, {user.name.split(" ")[0]}! <span>👋</span></h2><p>Tu pasaporte ya está en marcha. Cada estación suma una experiencia, un sello y nuevos puntos.</p></div><button className="avatar-card" onClick={openAvatarStudio}><span className="avatar-large"><AvatarPortrait value={user.avatar} size="small" /></span><span><b>Tu foto de pasaporte</b><small>Personalizar avatar</small></span><i>✎</i></button>
+          <div className="progress-card"><div className="progress-ring" style={{ "--progress": `${progress * 3.6}deg` } as React.CSSProperties}><span><b>{progress}%</b><small>completado</small></span></div><div><p className="step-label">AVANCE TOTAL</p><h3>{completedVisible.length} de {visibleMissions.length} misiones selladas</h3><p>{progress < 100 ? `Te faltan ${visibleMissions.length - completedVisible.length} sellos para completar el pasaporte.` : "¡Tu pasaporte está completo!"}</p></div><button className="secondary-button" onClick={() => turnTo(progress === 100 ? "complete" : "missions")}>{progress === 100 ? "Ver logro" : "Continuar misiones"}</button></div>
+          <div className="stat-grid"><StatCard icon="sparkle" label="Puntos acumulados" value={String(points)} color="#9d5cff" /><StatCard icon="play" label="Misiones en curso" value={String(started.length)} color="#ffb703" /><StatCard icon="check" label="Sellos obtenidos" value={String(completedVisible.length)} color="#12cfe0" /></div>
+          <div className="route-card"><div className="section-heading"><div><p className="step-label">TU RUTA</p><h3>Estaciones del festival</h3></div><button onClick={() => turnTo("missions")}>Ver todas <UiIcon name="arrow" /></button></div><div className="route-line">{visibleMissions.map((m, i) => <div className={`route-stop ${completed.includes(m.id) ? "done" : started.includes(m.id) ? "current" : ""}`} key={m.id}><span style={{ "--station": m.color } as React.CSSProperties}>{completed.includes(m.id) ? <UiIcon name="check" /> : <StationIcon station={m.station} />}</span><small>{i + 1}</small><b>{m.station.replace("Estación ", "")}</b></div>)}</div></div>
+        </div>}
+
+        {view === "guide" && <div className="page-content guide-page"><div className="center-heading"><p className="step-label">GUÍA DE VIAJE</p><h2>¿Cómo usar tu pasaporte?</h2><p>Cuatro pasos sencillos para vivir la experiencia completa.</p></div><div className="guide-steps"><GuideStep number="01" icon="compass" title="Explora las misiones" text="Abre el selector y descubre las actividades disponibles para tu UAD." color="#9d5cff" /><GuideStep number="02" icon="pin" title="Visita la estación" text="Acércate a la estación indicada y pulsa Iniciar misión cuando estés listo." color="#12cfe0" /><GuideStep number="03" icon="check" title="Completa el reto" text="Realiza la actividad con el facilitador y registra tu misión como completada." color="#ffb703" /><GuideStep number="04" icon="sparkle" title="Colecciona sellos" text="Suma puntos, revisa tu historial y completa todas las páginas del pasaporte." color="#ff5c9b" /></div><div className="tip-card"><span><UiIcon name="sparkle" /></span><div><b>Consejo de viajero</b><p>Las misiones disponibles dependen de tu UAD. Vuelve a revisar durante el festival: pueden aparecer retos nuevos.</p></div></div><button className="primary-button centered" onClick={() => turnTo("missions")}>Ver misiones disponibles <UiIcon name="arrow" /></button></div>}
+
+        {view === "missions" && <div className="page-content missions-page"><div className="section-heading missions-heading"><div><p className="step-label">SELECTOR DE MISIONES</p><h2>Elige tu próxima estación</h2><p>{visibleMissions.length} actividades disponibles para {user.uad}.</p></div><div className="points-pill"><UiIcon name="sparkle" /> {points} puntos</div></div><div className="filter-row"><button className={missionFilter === "Todas" ? "active" : ""} onClick={() => setMissionFilter("Todas")}>Todas</button>{stations.map((s) => <button aria-label={s.name} title={s.name} className={missionFilter === s.name ? "active" : ""} style={{ "--station": s.color } as React.CSSProperties} key={s.name} onClick={() => setMissionFilter(s.name)}><StationIcon station={s.name} /><span>{s.name.replace("Estación ", "")}</span></button>)}</div>
+          <div className="mission-grid">{filteredMissions.map((m) => { const done = completed.includes(m.id), active = started.includes(m.id), isStarting = busyAction === `start-${m.id}`, isFinishing = busyAction === `finish-${m.id}`; return <article className={`mission-card ${done ? "completed" : ""}`} key={m.id} style={{ "--station": m.color } as React.CSSProperties}><div className="mission-top"><span className="station-icon"><StationIcon station={m.station} /></span><span className="mission-status">{done ? "✓ SELLADA" : active ? "● EN CURSO" : "DISPONIBLE"}</span></div><p className="station-name">{m.station}</p><h3>{m.title}</h3><p>{m.description}</p><div className="mission-meta"><span><UiIcon name="clock" /> {m.duration}</span><span><UiIcon name="sparkle" /> {m.points} pts</span><span><UiIcon name="pin" /> {m.audience}</span></div>{done ? <button className="mission-button done-button" disabled>Pasaporte sellado <UiIcon name="check" /></button> : active ? <button className="mission-button" disabled={isFinishing} onClick={() => finishMission(m)}>{isFinishing ? <><LoadingDot /> Sellando...</> : <>Completar y sellar <UiIcon name="check" /></>}</button> : <button className="mission-button outline" disabled={isStarting} onClick={() => startMission(m.id)}>{isStarting ? <><LoadingDot /> Iniciando...</> : <>Iniciar misión <UiIcon name="play" /></>}</button>}</article> })}</div>
+        </div>}
+
+        {view === "bonus" && <MiniGamesPage completed={bonusCompleted} scores={bonusScores} busy={busyAction} onComplete={completeBonus} />}
+
+        {view === "history" && <div className="page-content history-page"><div className="section-heading"><div><p className="step-label">BITÁCORA PERSONAL</p><h2>Historial de misiones</h2><p>Todos los sellos y experiencias que has coleccionado.</p></div><div className="passport-number">PASAPORTE Nº <b>{user.cedula.slice(-6).padStart(6, "0")}</b></div></div><div className="history-list">{completedHistory.length ? completedHistory.map((m, i) => <article className="history-item" key={m.id}><span className="history-icon" style={{ background: m.color }}><StationIcon station={m.station} /></span><div><small>{m.station}</small><h3>{m.title}</h3><p>Completada el {historyDates[m.id] ? new Date(historyDates[m.id]).toLocaleDateString("es-CO", { day: "numeric", month: "long", year: "numeric" }) : `${i === 0 ? "10" : "11"} de agosto de 2026`} · {m.duration}</p></div><div className="history-points">+{m.points}<small>puntos</small></div><span className="mini-stamp">SELLADA</span></article>) : <div className="empty-state"><span><UiIcon name="compass" /></span><h3>Tu bitácora está lista</h3><p>Completa tu primera misión para estrenar esta página.</p><button className="primary-button" onClick={() => turnTo("missions")}>Explorar misiones</button></div>}</div></div>}
+
+        {view === "complete" && <div className="page-content complete-page"><div className="confetti-field" aria-hidden="true">✦　●　◆　✦　●　◆　✦</div><div className="completion-seal"><span>✓</span><b>PASAPORTE<br />COMPLETO</b><small>FESTIVAL 2026</small></div><p className="step-label">MISIÓN CUMPLIDA</p><h2>¡Completaste tu Pasaporte Seguro!</h2><p className="completion-copy">Recorriste todas las estaciones y demostraste que la diversidad, la felicidad, la seguridad, la salud y el cuidado se construyen entre todos.</p><div className="completion-name"><small>OTORGADO A</small><b>{user.name}</b><span>{user.uad} · {points} puntos</span></div><div className="completion-actions"><button className="secondary-button" onClick={() => turnTo("history")}>Ver mi historial</button><button className="primary-button" onClick={() => notify("Tu logro quedó guardado en el pasaporte.")}>Compartir mi logro <span>↗</span></button></div></div>}
+        {view === "admin" && user.role === "ADMIN" && <AdminPage missions={missions} people={adminPeople} uadOptions={catalogs.uads} busyAction={busyAction} onCreate={createAdminMission} onDelete={deleteAdminMission} />}
+        </div>
+      </div>
+    </section>}
+
+    {avatarOpen && user && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Personalizar avatar"><div className="avatar-modal avatar-studio"><button className="close-button" onClick={() => setAvatarOpen(false)}>×</button><div className="avatar-studio-preview"><div className="avatar-halo" /><AvatarPortrait value={encodeAvatar(avatarDraft)} size="large" /><p className="step-label">TU FOTO DE PASAPORTE</p><h2>Crea un avatar a tu estilo</h2><p>Combina tonos, peinados, ropa y accesorios.</p></div><div className="avatar-controls">
+      <AvatarOption label="Tono de piel"><div className="color-options">{skinTones.map((color, index) => <button aria-label={`Tono de piel ${index + 1}`} className={avatarDraft.skin === index ? "selected" : ""} style={{ background: color }} key={color} onClick={() => setAvatarDraft({ ...avatarDraft, skin: index })} />)}</div></AvatarOption>
+      <AvatarOption label="Estilo de cabello"><div className="text-options">{hairStyles.map((style, index) => <button className={avatarDraft.style === index ? "selected" : ""} key={style.id} onClick={() => setAvatarDraft({ ...avatarDraft, style: index })}>{style.label}</button>)}</div></AvatarOption>
+      <AvatarOption label="Color de cabello"><div className="color-options">{hairColors.map((color, index) => <button aria-label={`Color de cabello ${index + 1}`} className={avatarDraft.hair === index ? "selected" : ""} style={{ background: color }} key={color} onClick={() => setAvatarDraft({ ...avatarDraft, hair: index })} />)}</div></AvatarOption>
+      <AvatarOption label="Color de camiseta"><div className="color-options">{shirtColors.map((color, index) => <button aria-label={`Color de camiseta ${index + 1}`} className={avatarDraft.shirt === index ? "selected" : ""} style={{ background: color }} key={color} onClick={() => setAvatarDraft({ ...avatarDraft, shirt: index })} />)}</div></AvatarOption>
+      <AvatarOption label="Accesorio"><div className="accessory-options">{accessories.map((item, index) => <button className={avatarDraft.accessory === index ? "selected" : ""} key={item.id} onClick={() => setAvatarDraft({ ...avatarDraft, accessory: index })}><span>{item.icon}</span>{item.label}</button>)}</div></AvatarOption>
+      <button className="primary-button save-avatar" disabled={busyAction === "avatar"} onClick={saveAvatar}>{busyAction === "avatar" ? <><LoadingDot /> Guardando...</> : <>Guardar mi avatar <UiIcon name="check" /></>}</button>
+    </div></div></div>}
+    {stampMission && <div className="modal-backdrop" role="dialog" aria-modal="true"><div className="stamp-modal"><div className="animated-stamp" style={{ "--station": stampMission.color } as React.CSSProperties}><span>✓</span><b>MISIÓN<br />COMPLETADA</b></div><p className="step-label">NUEVO SELLO</p><h2>¡Lo hiciste!</h2><p>Completaste <b>{stampMission.title}</b> y sumaste <b>{stampMission.points} puntos</b> a tu pasaporte.</p><button className="primary-button" onClick={closeStamp}>Continuar mi recorrido <span>→</span></button></div></div>}
+    {sessionOpening && <div className="entry-transition" aria-hidden="true"><div className="entry-book"><span className="entry-left">PASAPORTE</span><span className="entry-right"><b>¡BIENVENIDO!</b><i>Tu viaje comienza ahora</i></span></div></div>}
+    {toast && <div className="toast" role="status"><span>✓</span>{toast}</div>}
+  </main>;
+}
+
+function AvatarPortrait({ value, size = "small" }: { value: string; size?: "tiny" | "small" | "large" }) {
+  const config = decodeAvatar(value);
+  const style = hairStyles[config.style];
+  const accessory = accessories[config.accessory];
+  return <span className={`custom-avatar avatar-${size} hair-${style.id} accessory-${accessory.id}`} style={{ "--skin": skinTones[config.skin], "--hair": hairColors[config.hair], "--shirt": shirtColors[config.shirt] } as React.CSSProperties} aria-label={`Avatar con cabello ${style.label.toLowerCase()}`}>
+    <i className="portrait-shirt" /><i className="portrait-neck" /><i className="portrait-hair-back" /><i className="portrait-ear left" /><i className="portrait-ear right" /><i className="portrait-face"><b className="portrait-brow left" /><b className="portrait-brow right" /><b className="portrait-eye left" /><b className="portrait-eye right" /><b className="portrait-nose" /><b className="portrait-smile" /></i><i className="portrait-hair-front" /><i className="portrait-accessory" />
+  </span>;
+}
+
+function AvatarOption({ label, children }: { label: string; children: React.ReactNode }) {
+  return <section className="avatar-option"><h3>{label}</h3>{children}</section>;
+}
+
+function StationIcon({ station }: { station: string }) {
+  if (station.includes("Diversidad")) return <svg className="station-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="8" r="2.4" /><circle cx="16" cy="8" r="2.4" /><circle cx="12" cy="6" r="2.7" /><path d="M3.8 18.5c.2-3 1.7-5 4.2-5 1 0 1.8.3 2.5.9M20.2 18.5c-.2-3-1.7-5-4.2-5-1 0-1.8.3-2.5.9M7.2 19c.2-4 2-6.4 4.8-6.4s4.6 2.4 4.8 6.4" /></svg>;
+  if (station.includes("Felicidad")) return <svg className="station-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 9.2c0 5-8.5 10-8.5 10s-8.5-5-8.5-10A4.7 4.7 0 0 1 12 6.4a4.7 4.7 0 0 1 8.5 2.8Z" /><path d="M8.5 10.5c1.7 2 5.3 2 7 0" /></svg>;
+  if (station.includes("Seguridad")) return <svg className="station-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8 20 6v5.6c0 4.8-3.2 7.8-8 9.6-4.8-1.8-8-4.8-8-9.6V6l8-3.2Z" /><path d="m8.3 12 2.4 2.4 5-5" /></svg>;
+  if (station.includes("Salud")) return <svg className="station-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 9.2c0 5-8.5 10-8.5 10s-8.5-5-8.5-10A4.7 4.7 0 0 1 12 6.4a4.7 4.7 0 0 1 8.5 2.8Z" /><path d="M5.5 12h3l1.3-3.2 2.4 6.4 1.5-3.2h4.8" /></svg>;
+  if (station.includes("Amor Propio")) return <svg className="station-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20c-4.7-2.1-7-5.3-7-9.2 3.3 0 5.7 1 7 3.1 1.3-2.1 3.7-3.1 7-3.1 0 3.9-2.3 7.1-7 9.2Z" /><path d="M12 13.9V7M9.5 6.4 12 3l2.5 3.4" /></svg>;
+  return <svg className="station-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.8 4.2C12.3 4.3 6.2 7.4 5 14.8c3.8 1.2 7.4.4 9.8-2.4" /><path d="M4 20c2.4-5.2 6.2-8.8 11.4-10.8M19.8 4.2c.3 8-3.4 13-10.5 12.7" /></svg>;
+}
+
+function UiIcon({ name }: { name: string }) {
+  const paths: Record<string, React.ReactNode> = {
+    home: <><path d="m3 11 9-8 9 8" /><path d="M5.5 9.5V21h13V9.5M9 21v-7h6v7" /></>,
+    help: <><circle cx="12" cy="12" r="9" /><path d="M9.6 9a2.5 2.5 0 1 1 3.2 2.4c-.8.3-.8 1-.8 1.8M12 17h.01" /></>,
+    compass: <><circle cx="12" cy="12" r="9" /><path d="m15.5 8.5-2 5-5 2 2-5 5-2Z" /></>,
+    history: <><path d="M3.5 12a8.5 8.5 0 1 0 2-5.5L3.5 8.5" /><path d="M3.5 4.5v4h4M12 7v5l3.2 2" /></>,
+    settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" /></>,
+    sparkle: <><path d="m12 2 1.4 5.1L18 9l-4.6 1.9L12 16l-1.4-5.1L6 9l4.6-1.9L12 2Z" /><path d="m18.5 15 .7 2.3 2.3.7-2.3.7-.7 2.3-.7-2.3-2.3-.7 2.3-.7.7-2.3Z" /></>,
+    play: <path d="m9 6 9 6-9 6V6Z" />,
+    check: <path d="m5 12 4.2 4.2L19 6.8" />,
+    pin: <><path d="M20 10c0 5.5-8 11-8 11S4 15.5 4 10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="2.5" /></>,
+    arrow: <><path d="M5 12h14M14 7l5 5-5 5" /></>,
+    clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+    users: <><circle cx="9" cy="8" r="3" /><path d="M3.5 19c.3-4 2.2-6 5.5-6s5.2 2 5.5 6M16 6.5a2.7 2.7 0 0 1 0 5.3M16 13c2.8.2 4.3 2.2 4.5 5" /></>,
+    trend: <><path d="M4 18 10 12l4 3 6-8" /><path d="M15 7h5v5" /></>,
+    trophy: <><path d="M8 3h8v4c0 3-1.6 5-4 5S8 10 8 7V3ZM12 12v5M8 21h8M9 17h6" /><path d="M8 5H4v2c0 2 1.5 3.5 4 3.5M16 5h4v2c0 2-1.5 3.5-4 3.5" /></>,
+    gamepad: <><path d="M7.5 8h9a4.5 4.5 0 0 1 4.3 5.8l-1.1 3.6a2.2 2.2 0 0 1-3.7.8L14.1 16H9.9L8 18.2a2.2 2.2 0 0 1-3.7-.8l-1.1-3.6A4.5 4.5 0 0 1 7.5 8Z" /><path d="M8 11v4M6 13h4M16.5 12h.01M18 14h.01" /></>,
+    cover: <><path d="M5 3h11a3 3 0 0 1 3 3v15H7a2 2 0 0 1-2-2V3Z" /><path d="M7 17h12M9 3v14" /></>,
+    logout: <><path d="M10 5H5v14h5M14 8l4 4-4 4M8 12h10" /></>,
+    trash: <><path d="M4 7h16M9 3h6l1 4H8l1-4ZM6 7l1 14h10l1-14M10 11v6M14 11v6" /></>,
+  };
+  return <svg className="ui-icon" viewBox="0 0 24 24" aria-hidden="true">{paths[name] || paths.sparkle}</svg>;
+}
+
+function LoadingDot() { return <span className="loading-dot" aria-hidden="true" />; }
+function Tab({ label, icon, active, onClick }: { label: string; icon: string; active: boolean; onClick: () => void }) { return <button className={active ? "active" : ""} onClick={onClick}><span><UiIcon name={icon} /></span>{label}</button>; }
+function StatCard({ icon, label, value, color }: { icon: string; label: string; value: string; color: string }) { return <article className="stat-card"><span style={{ background: color }}><UiIcon name={icon} /></span><div><b>{value}</b><small>{label}</small></div></article>; }
+function GuideStep({ number, icon, title, text, color }: { number: string; icon: string; title: string; text: string; color: string }) { return <article className="guide-step"><span className="guide-number">{number}</span><div className="guide-icon" style={{ background: color }}><UiIcon name={icon} /></div><h3>{title}</h3><p>{text}</p></article>; }
+
+function AdminPage({ missions, people, uadOptions, busyAction, onCreate, onDelete }: {
+  missions: Mission[];
+  people: PersonProgress[];
+  uadOptions: string[];
+  busyAction: string;
+  onCreate: (mission: Mission) => Promise<boolean>;
+  onDelete: (mission: Mission) => Promise<boolean>;
+}) {
+  const [tab, setTab] = useState<"overview" | "missions">("overview");
+  const [audience, setAudience] = useState("Todas las UAD");
+  const [deleteTarget, setDeleteTarget] = useState<Mission | null>(null);
+  const average = people.length ? Math.round(people.reduce((sum, p) => sum + (p.total ? (p.completed / p.total) * 100 : 0), 0) / people.length) : 0;
+  const leader = people.slice().sort((a, b) => b.completed - a.completed || b.points - a.points)[0];
+  const totalCompleted = people.reduce((sum, p) => sum + p.completed, 0);
+  const totalPoints = people.reduce((sum, p) => sum + p.points, 0);
+
+  async function createMission(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const element = event.currentTarget;
+    const form = new FormData(element);
+    const station = stations.find((item) => item.name === String(form.get("station"))) || stations[0];
+    const success = await onCreate({
+      id: Date.now(), station: station.name, icon: station.icon, color: station.color,
+      title: String(form.get("title")), description: String(form.get("description")),
+      points: Number(form.get("points")), audience, duration: String(form.get("duration")) || "8 min",
+    });
+    if (success) { element.reset(); setAudience("Todas las UAD"); }
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    if (await onDelete(deleteTarget)) setDeleteTarget(null);
+  }
+
+  return <div className="page-content admin-page">
+    <div className="admin-title"><div><p className="step-label">CENTRO DE CONTROL</p><h2>Administración del festival</h2><p>Gestiona misiones y acompaña el avance de los colaboradores.</p></div><div className="admin-badge"><UiIcon name="settings" /> Modo administrador</div></div>
+    <div className="admin-tabs"><button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>Resumen y progreso</button><button className={tab === "missions" ? "active" : ""} onClick={() => setTab("missions")}>Gestionar misiones</button></div>
+
+    {tab === "overview" ? <>
+      <div className="admin-stats"><StatCard icon="users" label="Colaboradores" value={String(people.length)} color="#9d5cff" /><StatCard icon="check" label="Misiones completadas" value={String(totalCompleted)} color="#12cfe0" /><StatCard icon="trend" label="Avance promedio" value={`${average}%`} color="#43d17d" /><StatCard icon="sparkle" label="Puntos entregados" value={totalPoints >= 1000 ? `${(totalPoints / 1000).toFixed(1)}K` : String(totalPoints)} color="#ffb703" /></div>
+      {leader && <div className="leader-card"><span className="leader-avatar"><UiIcon name="trophy" /></span><div><p className="step-label">LÍDER DEL RECORRIDO</p><h3>{leader.name}</h3><p>{leader.uad} · {leader.completed} misiones completadas</p></div><b>{leader.points}<small>puntos</small></b></div>}
+      <div className="people-table"><div className="table-title"><h3>Progreso de colaboradores</h3><button>Descargar reporte ↓</button></div><div className="table-head"><span>Colaborador</span><span>UAD</span><span>Progreso</span><span>Puntos</span></div>{people.map((p) => { const pct = p.total ? Math.round((p.completed / p.total) * 100) : 0; return <div className="table-row" key={`${p.name}-${p.uad}`}><span><i>{p.name.charAt(0)}</i><b>{p.name}</b></span><span>{p.uad}</span><span><div className="mini-progress"><i style={{ width: `${pct}%` }} /></div><b>{pct}%</b></span><span className="point-value">{p.points}</span></div>; })}</div>
+    </> : <div className="mission-admin-grid">
+      <form className="create-mission-card" onSubmit={createMission}><p className="step-label">NUEVA ACTIVIDAD</p><h3>Crear una misión</h3><label>Nombre de la misión<input name="title" placeholder="Ej. Ruta de la confianza" required /></label><label>Estación<select name="station">{stations.map((s) => <option key={s.name}>{s.name}</option>)}</select></label><label>Descripción<textarea name="description" placeholder="Explica en qué consiste el reto..." required /></label><div className="field-row"><label>Duración<input name="duration" placeholder="8 min" /></label><label>Puntos<input name="points" type="number" defaultValue="100" min="10" required /></label></div><label>¿A quién se asigna?<select value={audience === "Todas las UAD" ? "all" : "uad"} onChange={(e) => setAudience(e.target.value === "all" ? "Todas las UAD" : (uadOptions[0] || "Todas las UAD"))}><option value="all">A todas las UAD</option><option value="uad">A una UAD específica</option></select></label>{audience !== "Todas las UAD" && <label>UAD asignada<select value={audience} onChange={(e) => setAudience(e.target.value)}>{uadOptions.map((uad) => <option key={uad}>{uad}</option>)}</select></label>}<button className="primary-button" type="submit" disabled={busyAction === "create-mission"}>{busyAction === "create-mission" ? <><LoadingDot /> Publicando...</> : <>Publicar misión <UiIcon name="arrow" /></>}</button></form>
+      <div className="active-missions"><div className="section-heading"><div><p className="step-label">PUBLICADAS</p><h3>Misiones activas</h3></div><span>{missions.length}</span></div>{missions.slice().reverse().map((m) => <article key={m.id}><span style={{ background: m.color }}><StationIcon station={m.station} /></span><div><b>{m.title}</b><small>{m.station} · {m.audience}</small></div><button className="delete-mission" aria-label={`Eliminar ${m.title}`} title="Eliminar misión" onClick={() => setDeleteTarget(m)}><UiIcon name="trash" /></button></article>)}</div>
+    </div>}
+
+    {deleteTarget && <div className="admin-confirm-backdrop" role="dialog" aria-modal="true" aria-label="Confirmar eliminación"><div className="admin-confirm"><span><UiIcon name="trash" /></span><h3>¿Eliminar esta misión?</h3><p><b>{deleteTarget.title}</b> dejará de aparecer para los usuarios. El historial ya registrado se conservará.</p><div><button className="secondary-button" onClick={() => setDeleteTarget(null)} disabled={busyAction.startsWith("delete-")}>Cancelar</button><button className="danger-button" onClick={confirmDelete} disabled={busyAction === `delete-${deleteTarget.id}`}>{busyAction === `delete-${deleteTarget.id}` ? <><LoadingDot /> Eliminando...</> : <>Eliminar misión <UiIcon name="trash" /></>}</button></div></div></div>}
+  </div>;
+}
