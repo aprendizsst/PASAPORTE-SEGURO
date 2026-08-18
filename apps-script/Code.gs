@@ -29,6 +29,14 @@ const CACHE_KEYS = {
   SESSION_CLEANUP: "pasaporte:session-cleanup:v1",
 };
 
+const CACHE_TTL = {
+  CATALOGS: 21600,
+  MISSIONS: 900,
+  USER: 3600,
+  SESSION: 3600,
+  ACTIVITY: 600,
+};
+
 const WRITE_ACTIONS = ["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "adminCreateMission", "adminDeleteMission"];
 
 function doGet() {
@@ -37,7 +45,6 @@ function doGet() {
 
 function doPost(event) {
   try {
-    ensureStructure_();
     const request = JSON.parse((event && event.postData && event.postData.contents) || "{}");
     const action = String(request.action || "");
     const requestId = cleanRequestId_(request.requestId);
@@ -114,7 +121,7 @@ function catalogsApi_() {
     cargos: unique_(rows.filter(function (row) { return row.Tipo === "CARGO"; }).map(function (row) { return String(row.Valor); })),
     uads: unique_(rows.filter(function (row) { return row.Tipo === "UAD"; }).map(function (row) { return String(row.Valor); })),
   };
-  cachePut_(CACHE_KEYS.CATALOGS, catalogs, 600);
+  cachePut_(CACHE_KEYS.CATALOGS, catalogs, CACHE_TTL.CATALOGS);
   return catalogs;
 }
 
@@ -134,12 +141,10 @@ function registerApi_(request) {
   if (password.length > 128) throw new Error("La contraseña supera el tamaño permitido.");
 
   const lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  if (!lock.tryLock(5000)) throw new Error("Hay varios registros en curso. Espera un momento e intenta nuevamente.");
   try {
-    const users = sheetObjects_(SHEETS.USERS);
-    if (users.some(function (row) { return cleanId_(row.Cedula) === cedula; })) throw new Error("Ya existe un pasaporte registrado con esa cédula.");
-    const duplicatedEmail = users.some(function (row) { return normalize_(row.Correo) === normalize_(email); });
-    if (duplicatedEmail) throw new Error("Ya existe un pasaporte registrado con ese correo.");
+    if (findObjectByField_(SHEETS.USERS, "Cedula", cedula, cleanId_)) throw new Error("Ya existe un pasaporte registrado con esa cédula.");
+    if (findObjectByField_(SHEETS.USERS, "Correo", email, normalize_)) throw new Error("Ya existe un pasaporte registrado con ese correo.");
     const salt = Utilities.getUuid();
     const newUser = {
       Id: Utilities.getUuid(), Nombre: name, Cedula: cedula,
@@ -163,14 +168,21 @@ function loginApi_(request) {
   if (hashPassword_(String(request.password || ""), String(user.PasswordSalt)) !== String(user.PasswordHash)) throw new Error("Cédula o contraseña incorrecta.");
   clearLoginRate_(cedula);
 
-  maybeCleanupSessions_();
-  const token = Utilities.getUuid() + Utilities.getUuid().replace(/-/g, "");
-  const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000);
-  appendObject_(SHEETS.SESSIONS, { Token: token, UsuarioId: user.Id, ExpiraEn: expiresAt, CreadoEn: new Date() });
-  cachePut_(sessionCacheKey_(token), { user: user, expiresAt: expiresAt.toISOString() }, 120);
+  const reusable = cacheGet_(activeSessionCacheKey_(user.Id));
+  let token;
+  let expiresAt;
+  if (reusable && reusable.token && new Date(reusable.expiresAt).getTime() > Date.now()) {
+    token = String(reusable.token);
+    expiresAt = new Date(reusable.expiresAt);
+  } else {
+    token = Utilities.getUuid() + Utilities.getUuid().replace(/-/g, "");
+    expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000);
+    appendObject_(SHEETS.SESSIONS, { Token: token, UsuarioId: user.Id, ExpiraEn: expiresAt, CreadoEn: new Date() });
+    cachePut_(activeSessionCacheKey_(user.Id), { token: token, expiresAt: expiresAt.toISOString() }, CACHE_TTL.SESSION);
+  }
+  cachePut_(sessionCacheKey_(token), { user: user, expiresAt: expiresAt.toISOString() }, CACHE_TTL.SESSION);
   const bundle = userBundle_(user);
   bundle.token = token;
-  if (String(user.Rol) === "ADMIN") bundle.adminPeople = buildAdminPeople_();
   return bundle;
 }
 
@@ -178,7 +190,6 @@ function sessionApi_(request) {
   const user = requireSession_(request.token);
   const bundle = userBundle_(user);
   bundle.token = String(request.token);
-  if (String(user.Rol) === "ADMIN") bundle.adminPeople = buildAdminPeople_();
   return bundle;
 }
 
@@ -202,7 +213,8 @@ function updateAvatarApi_(request) {
   updateObjectRow_(SHEETS.USERS, user._row, { Avatar: String(request.avatar) });
   user.Avatar = String(request.avatar);
   cacheUser_(user);
-  cachePut_(sessionCacheKey_(request.token), { user: user, expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString() }, 120);
+  const currentSession = cacheGet_(sessionCacheKey_(request.token));
+  if (currentSession && currentSession.expiresAt) cachePut_(sessionCacheKey_(request.token), { user: user, expiresAt: currentSession.expiresAt }, CACHE_TTL.SESSION);
   return { avatar: String(request.avatar) };
 }
 
@@ -212,12 +224,11 @@ function completeBonusApi_(request) {
   const allowedGames = ["word-search", "sudoku", "target"];
   if (allowedGames.indexOf(gameId) < 0) throw new Error("Minijuego no permitido.");
   const score = Math.max(0, Math.min(1000, Number(request.score) || 0));
-  const snapshot = bonusForUser_(user.Id);
   const lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  if (!lock.tryLock(4000)) throw new Error("Estamos guardando otros resultados. Intenta nuevamente en un momento.");
   try {
-    let current = snapshot.find(function (row) { return String(row.JuegoId) === gameId; });
-    if (!current) current = sheetObjects_(SHEETS.BONUS).find(function (row) { return String(row.UsuarioId) === String(user.Id) && String(row.JuegoId) === gameId; });
+    CacheService.getScriptCache().remove(bonusCacheKey_(user.Id));
+    const current = findObjectsByField_(SHEETS.BONUS, "UsuarioId", user.Id, String).find(function (row) { return String(row.JuegoId) === gameId; });
     if (current) updateObjectRow_(SHEETS.BONUS, current._row, { Puntaje: Math.max(Number(current.Puntaje) || 0, score), CompletadoEn: new Date() });
     else appendObject_(SHEETS.BONUS, { Id: Utilities.getUuid(), UsuarioId: user.Id, JuegoId: gameId, Puntaje: score, CompletadoEn: new Date() });
   } finally { lock.releaseLock(); }
@@ -289,16 +300,26 @@ function buildAdminPeople_() {
   const progress = sheetObjects_(SHEETS.PROGRESS).filter(function (row) { return row.Estado === "COMPLETADA"; });
   const bonus = sheetObjects_(SHEETS.BONUS);
   const pointsByMission = {};
+  const progressByUser = {};
+  const bonusByUser = {};
   allMissions.forEach(function (m) { pointsByMission[String(m.Id)] = Number(m.Puntos) || 0; });
+  progress.forEach(function (row) {
+    const userId = String(row.UsuarioId);
+    if (!progressByUser[userId]) progressByUser[userId] = [];
+    progressByUser[userId].push(row);
+  });
+  bonus.forEach(function (row) {
+    const userId = String(row.UsuarioId);
+    bonusByUser[userId] = (bonusByUser[userId] || 0) + (Number(row.Puntaje) || 0);
+  });
   const people = users.map(function (user) {
     const available = missions.filter(function (m) { return m.Audiencia === "Todas las UAD" || String(m.Audiencia) === String(user.UAD); });
-    const completedRows = progress.filter(function (p) { return String(p.UsuarioId) === String(user.Id); });
+    const completedRows = progressByUser[String(user.Id)] || [];
     const availableIds = available.map(function (mission) { return String(mission.Id); });
     const activeCompletedRows = completedRows.filter(function (row) { return availableIds.indexOf(String(row.MisionId)) >= 0; });
-    const bonusPoints = bonus.filter(function (row) { return String(row.UsuarioId) === String(user.Id); }).reduce(function (sum, row) { return sum + (Number(row.Puntaje) || 0); }, 0);
     return {
       name: String(user.Nombre), uad: String(user.UAD), completed: activeCompletedRows.length,
-      total: available.length, points: completedRows.reduce(function (sum, p) { return sum + (pointsByMission[String(p.MisionId)] || 0); }, 0) + bonusPoints,
+      total: available.length, points: completedRows.reduce(function (sum, p) { return sum + (pointsByMission[String(p.MisionId)] || 0); }, 0) + (bonusByUser[String(user.Id)] || 0),
     };
   });
   cachePut_(CACHE_KEYS.ADMIN_DASHBOARD, people, 30);
@@ -315,7 +336,7 @@ function activeMissions_() {
   const cached = cacheGet_(CACHE_KEYS.MISSIONS);
   if (cached) return cached;
   const missions = sheetObjects_(SHEETS.MISSIONS).filter(function (row) { return truthy_(row.Activa); });
-  cachePut_(CACHE_KEYS.MISSIONS, missions, 120);
+  cachePut_(CACHE_KEYS.MISSIONS, missions, CACHE_TTL.MISSIONS);
   return missions;
 }
 
@@ -323,7 +344,7 @@ function allMissions_() {
   const cached = cacheGet_(CACHE_KEYS.MISSIONS_ALL);
   if (cached) return cached;
   const missions = sheetObjects_(SHEETS.MISSIONS);
-  cachePut_(CACHE_KEYS.MISSIONS_ALL, missions, 120);
+  cachePut_(CACHE_KEYS.MISSIONS_ALL, missions, CACHE_TTL.MISSIONS);
   return missions;
 }
 
@@ -348,11 +369,11 @@ function upsertProgress_(userId, missionId, status) {
 function requireSession_(token) {
   const cached = cacheGet_(sessionCacheKey_(token));
   if (cached && new Date(cached.expiresAt).getTime() > Date.now() && cached.user && truthy_(cached.user.Activo)) return cached.user;
-  const session = sheetObjects_(SHEETS.SESSIONS).find(function (row) { return String(row.Token) === String(token) && new Date(row.ExpiraEn).getTime() > Date.now(); });
-  if (!session) throw new Error("Tu sesión venció. Inicia sesión nuevamente.");
+  const session = findObjectByField_(SHEETS.SESSIONS, "Token", token, String);
+  if (!session || new Date(session.ExpiraEn).getTime() <= Date.now()) throw new Error("Tu sesión venció. Inicia sesión nuevamente.");
   const user = findUserById_(session.UsuarioId);
   if (!user || !truthy_(user.Activo)) throw new Error("Usuario inactivo.");
-  cachePut_(sessionCacheKey_(token), { user: user, expiresAt: new Date(session.ExpiraEn).toISOString() }, 120);
+  cachePut_(sessionCacheKey_(token), { user: user, expiresAt: new Date(session.ExpiraEn).toISOString() }, CACHE_TTL.SESSION);
   return user;
 }
 
@@ -368,67 +389,40 @@ function cleanupSessions_() {
   rows.forEach(function (row) { sheet.deleteRow(row._row); });
 }
 
-function maybeCleanupSessions_() {
-  const cache = CacheService.getScriptCache();
-  if (cache.get(CACHE_KEYS.SESSION_CLEANUP)) return;
+function mantenimientoPasaporteSeguro() {
   cleanupSessions_();
-  cache.put(CACHE_KEYS.SESSION_CLEANUP, "1", 300);
+  return "Sesiones vencidas eliminadas.";
 }
 
 function sessionCacheKey_(token) {
   return "pasaporte:session:" + String(token || "");
 }
 
+function activeSessionCacheKey_(userId) { return "pasaporte:active-session:" + String(userId || ""); }
 function userCedulaCacheKey_(cedula) { return "pasaporte:user:cedula:" + cleanId_(cedula); }
 function userIdCacheKey_(id) { return "pasaporte:user:id:" + String(id || ""); }
 function progressCacheKey_(userId) { return "pasaporte:progress:" + String(userId || ""); }
 function bonusCacheKey_(userId) { return "pasaporte:bonus:" + String(userId || ""); }
 
 function progressForUser_(userId) {
-  return activityRowsForUser_(SHEETS.PROGRESS, userId, progressCacheKey_, 75);
+  return activityRowsForUser_(SHEETS.PROGRESS, userId, progressCacheKey_);
 }
 
 function bonusForUser_(userId) {
-  return activityRowsForUser_(SHEETS.BONUS, userId, bonusCacheKey_, 120);
+  return activityRowsForUser_(SHEETS.BONUS, userId, bonusCacheKey_);
 }
 
-function activityRowsForUser_(sheetName, userId, keyBuilder, seconds) {
+function activityRowsForUser_(sheetName, userId, keyBuilder) {
   const key = keyBuilder(userId);
   const cached = cacheGet_(key);
   if (cached !== null) return cached;
-  const emptyKey = "pasaporte:empty:" + sheetName;
-  if (CacheService.getScriptCache().get(emptyKey)) return [];
-
-  const lock = LockService.getScriptLock();
-  const locked = lock.tryLock(1800);
-  try {
-    if (locked) {
-      const refreshed = cacheGet_(key);
-      if (refreshed !== null) return refreshed;
-    }
-    const allRows = sheetObjects_(sheetName);
-    if (!allRows.length) {
-      CacheService.getScriptCache().put(emptyKey, "1", 30);
-      cachePut_(key, [], seconds);
-      return [];
-    }
-    const grouped = {};
-    allRows.forEach(function (row) {
-      const owner = String(row.UsuarioId);
-      if (!grouped[owner]) grouped[owner] = [];
-      grouped[owner].push(row);
-    });
-    Object.keys(grouped).forEach(function (owner) { cachePut_(keyBuilder(owner), grouped[owner], seconds); });
-    const rows = grouped[String(userId)] || [];
-    cachePut_(key, rows, seconds);
-    return rows;
-  } finally {
-    if (locked) lock.releaseLock();
-  }
+  const rows = findObjectsByField_(sheetName, "UsuarioId", userId, String);
+  cachePut_(key, rows, CACHE_TTL.ACTIVITY);
+  return rows;
 }
 
 function invalidateUserActivity_(userId) {
-  CacheService.getScriptCache().removeAll([progressCacheKey_(userId), bonusCacheKey_(userId), "pasaporte:empty:" + SHEETS.PROGRESS, "pasaporte:empty:" + SHEETS.BONUS, CACHE_KEYS.ADMIN_DASHBOARD]);
+  CacheService.getScriptCache().removeAll([progressCacheKey_(userId), bonusCacheKey_(userId), CACHE_KEYS.ADMIN_DASHBOARD]);
 }
 
 function invalidateMissionCaches_() {
@@ -451,38 +445,24 @@ function findUserByCedula_(cedula) {
   const key = userCedulaCacheKey_(cedula);
   const cached = cacheGet_(key);
   if (cached) return cached;
-  const users = loadUsersAndWarmCache_(key);
-  return users.find(function (row) { return cleanId_(row.Cedula) === cleanId_(cedula); });
+  const user = findObjectByField_(SHEETS.USERS, "Cedula", cedula, cleanId_);
+  if (user) cacheUser_(user);
+  return user;
 }
 
 function findUserById_(id) {
   const key = userIdCacheKey_(id);
   const cached = cacheGet_(key);
   if (cached) return cached;
-  const users = loadUsersAndWarmCache_(key);
-  return users.find(function (row) { return String(row.Id) === String(id); });
-}
-
-function loadUsersAndWarmCache_(requestedKey) {
-  const lock = LockService.getScriptLock();
-  const locked = lock.tryLock(1500);
-  try {
-    if (locked) {
-      const refreshed = cacheGet_(requestedKey);
-      if (refreshed) return [refreshed];
-    }
-    const users = sheetObjects_(SHEETS.USERS);
-    users.forEach(cacheUser_);
-    return users;
-  } finally {
-    if (locked) lock.releaseLock();
-  }
+  const user = findObjectByField_(SHEETS.USERS, "Id", id, String);
+  if (user) cacheUser_(user);
+  return user;
 }
 
 function cacheUser_(user) {
   if (!user) return;
-  cachePut_(userCedulaCacheKey_(user.Cedula), user, 300);
-  cachePut_(userIdCacheKey_(user.Id), user, 300);
+  cachePut_(userCedulaCacheKey_(user.Cedula), user, CACHE_TTL.USER);
+  cachePut_(userIdCacheKey_(user.Id), user, CACHE_TTL.USER);
 }
 
 function hashPassword_(password, salt) {
@@ -503,31 +483,95 @@ function clearLoginRate_(cedula) {
   if (cedula) CacheService.getScriptCache().remove("pasaporte:login-attempt:" + cedula);
 }
 
+let spreadsheetInstance_ = null;
+const executionSheets_ = {};
+const executionHeaders_ = {};
+
+function getSpreadsheet_() {
+  if (!spreadsheetInstance_) spreadsheetInstance_ = SpreadsheetApp.getActiveSpreadsheet();
+  return spreadsheetInstance_;
+}
+
 function ensureStructure_() {
   Object.keys(HEADERS).forEach(function (name) { ensureSheet_(name, HEADERS[name]); });
 }
 
 function ensureSheet_(name, headers) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = getSpreadsheet_();
   let sheet = ss.getSheetByName(name);
   if (!sheet) sheet = ss.insertSheet(name);
   if (sheet.getLastRow() === 0) sheet.appendRow(headers);
   sheet.setFrozenRows(1);
+  executionSheets_[name] = sheet;
+  delete executionHeaders_[name];
   return sheet;
 }
 
 function getSheet_(name) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
+  if (executionSheets_[name]) return executionSheets_[name];
+  const sheet = getSpreadsheet_().getSheetByName(name);
   if (!sheet) throw new Error("No existe la hoja " + name + ". Ejecute setupPasaporteSeguro().");
+  executionSheets_[name] = sheet;
   return sheet;
+}
+
+function headersForSheet_(name) {
+  if (executionHeaders_[name]) return executionHeaders_[name];
+  const sheet = getSheet_(name);
+  const lastColumn = sheet.getLastColumn();
+  if (!lastColumn) throw new Error("La hoja " + name + " no tiene encabezados.");
+  const headers = sheet.getRange(1, 1, 1, lastColumn).getDisplayValues()[0].map(String);
+  executionHeaders_[name] = headers;
+  return headers;
+}
+
+function headerColumn_(name, field) {
+  const column = headersForSheet_(name).indexOf(field) + 1;
+  if (column < 1) throw new Error("Falta la columna " + field + " en la hoja " + name + ".");
+  return column;
+}
+
+function objectAtRow_(name, rowNumber) {
+  const sheet = getSheet_(name);
+  const headers = headersForSheet_(name);
+  const values = sheet.getRange(rowNumber, 1, 1, headers.length).getValues()[0];
+  const object = { _row: rowNumber };
+  headers.forEach(function (header, column) { object[header] = values[column]; });
+  return object;
+}
+
+function findObjectsByField_(name, field, value, normalizer) {
+  const sheet = getSheet_(name);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const column = headerColumn_(name, field);
+  const target = normalizer(value);
+  const searchRange = sheet.getRange(2, column, lastRow - 1, 1);
+  let matches = [];
+  try {
+    matches = searchRange.createTextFinder(String(value)).matchEntireCell(true).matchCase(false).findAll();
+  } catch (error) {
+    matches = [];
+  }
+  let rowNumbers = matches.map(function (range) { return range.getRow(); });
+  if (!rowNumbers.length) {
+    const values = searchRange.getDisplayValues();
+    values.forEach(function (row, index) { if (normalizer(row[0]) === target) rowNumbers.push(index + 2); });
+  }
+  return rowNumbers.map(function (rowNumber) { return objectAtRow_(name, rowNumber); }).filter(function (object) { return normalizer(object[field]) === target; });
+}
+
+function findObjectByField_(name, field, value, normalizer) {
+  const rows = findObjectsByField_(name, field, value, normalizer);
+  return rows.length ? rows[0] : null;
 }
 
 function sheetObjects_(name) {
   const sheet = getSheet_(name);
   if (sheet.getLastRow() < 2) return [];
-  const values = sheet.getDataRange().getValues();
-  const headers = values[0].map(String);
-  return values.slice(1).map(function (row, index) {
+  const headers = headersForSheet_(name);
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues();
+  return values.map(function (row, index) {
     const object = { _row: index + 2 };
     headers.forEach(function (header, column) { object[header] = row[column]; });
     return object;
@@ -536,14 +580,15 @@ function sheetObjects_(name) {
 
 function appendObject_(sheetName, object) {
   const sheet = getSheet_(sheetName);
-  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  sheet.appendRow(headers.map(function (header) { return object[header] === undefined ? "" : object[header]; }));
-  return sheet.getLastRow();
+  const headers = headersForSheet_(sheetName);
+  const rowNumber = sheet.getLastRow() + 1;
+  sheet.getRange(rowNumber, 1, 1, headers.length).setValues([headers.map(function (header) { return object[header] === undefined ? "" : object[header]; })]);
+  return rowNumber;
 }
 
 function updateObjectRow_(sheetName, rowNumber, changes) {
   const sheet = getSheet_(sheetName);
-  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const headers = headersForSheet_(sheetName);
   const range = sheet.getRange(rowNumber, 1, 1, headers.length);
   const values = range.getValues()[0];
   Object.keys(changes).forEach(function (key) {

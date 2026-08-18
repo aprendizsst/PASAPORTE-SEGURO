@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { BonusGameId } from "./MiniGames";
 import { BadgeCollection, buildBadges, FestivalRoute, FinalPassportCard } from "./FestivalExperience";
 
@@ -13,6 +13,7 @@ type Mission = { id: number; station: string; icon: string; color: string; title
 type AvatarConfig = { skin: number; hair: number; style: number; shirt: number; accessory: number };
 type PersonProgress = { name: string; uad: string; completed: number; total: number; points: number };
 type SessionBundle = { user: User; missions: Mission[]; historyMissions?: Mission[]; completed: number[]; started?: number[]; history?: Record<number, string>; adminPeople?: PersonProgress[]; bonusCompleted?: string[]; bonusScores?: Record<string, number>; token: string };
+type StoredSession = { savedAt: number; bundle: SessionBundle };
 
 const stations = [
   { name: "Estación Diversidad", icon: "◉", color: "#9d5cff" },
@@ -79,39 +80,90 @@ function featureEnabled(name: string) {
   return window.PASSPORT_CONFIG?.features?.[name] !== false;
 }
 
+const SESSION_BUNDLE_KEY = "pasaporte_session_bundle_v2";
+const inflightReads = new Map<string, Promise<unknown>>();
+const WRITE_API_ACTIONS = new Set(["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "adminCreateMission", "adminDeleteMission"]);
+
+function apiPolicy(action: string) {
+  if (action === "login" || action === "register") return { attempts: 2, timeoutMs: 14000 };
+  if (WRITE_API_ACTIONS.has(action)) return { attempts: 3, timeoutMs: 14000 };
+  return { attempts: 2, timeoutMs: 10000 };
+}
+
+function apiUrlOrThrow() {
+  const url = getApiUrl();
+  if (!url) throw new Error("El Pasaporte Seguro no tiene configurada la conexión con Apps Script.");
+  if (/TU[_ -]?IMPLEMENTACION|TU[_ -]?ID/i.test(url) || /\/dev(?:\?|$)/.test(url)) throw new Error("La conexión debe usar la URL pública de Apps Script terminada en /exec.");
+  return url;
+}
+
 async function callApi(action: string, payload: Record<string, unknown> = {}) {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) throw new Error("No tienes conexión. Revisa internet e intenta nuevamente.");
+  const url = apiUrlOrThrow();
   const requestId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 18000);
-    try {
-      const response = await fetch(getApiUrl(), {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action, requestId, ...payload }),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        const error = new Error("El servicio está recibiendo muchas solicitudes.") as Error & { retryable?: boolean };
-        error.retryable = response.status === 429 || response.status >= 500;
-        throw error;
+  const policy = apiPolicy(action);
+  const inflightKey = action === "catalogs" ? "catalogs" : action === "session" ? `session:${String(payload.token || "")}` : "";
+
+  const request = async () => {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < policy.attempts; attempt += 1) {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), policy.timeoutMs);
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify({ action, requestId, ...payload }),
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          const error = new Error(response.status === 429 ? "Hay muchas personas conectadas. Reintentando…" : "El servicio no respondió correctamente.") as Error & { retryable?: boolean };
+          error.retryable = response.status === 429 || response.status >= 500;
+          throw error;
+        }
+        const responseText = await response.text();
+        let result: { ok?: boolean; message?: string; data?: unknown };
+        try { result = JSON.parse(responseText); }
+        catch {
+          throw new Error("Apps Script no devolvió una respuesta válida. Verifica que la implementación sea pública y termine en /exec.");
+        }
+        if (!result.ok) throw new Error(result.message || "No fue posible completar la solicitud.");
+        return result.data;
+      } catch (error) {
+        lastError = error;
+        const aborted = error instanceof DOMException && error.name === "AbortError";
+        const retryable = aborted || (error as Error & { retryable?: boolean })?.retryable || error instanceof TypeError;
+        if (!retryable || attempt === policy.attempts - 1) break;
+        await new Promise((resolve) => window.setTimeout(resolve, 450 * (2 ** attempt) + Math.random() * 180));
+      } finally {
+        window.clearTimeout(timeout);
       }
-      const result = await response.json();
-      if (!result.ok) throw new Error(result.message || "No fue posible completar la solicitud.");
-      return result.data;
-    } catch (error) {
-      lastError = error;
-      const aborted = error instanceof DOMException && error.name === "AbortError";
-      const retryable = aborted || (error as Error & { retryable?: boolean })?.retryable || error instanceof TypeError || error instanceof SyntaxError;
-      if (!retryable || attempt === 2) break;
-      await new Promise((resolve) => window.setTimeout(resolve, 700 * (2 ** attempt) + Math.random() * 250));
-    } finally {
-      window.clearTimeout(timeout);
     }
-  }
-  if (lastError instanceof DOMException && lastError.name === "AbortError") throw new Error("La conexión tardó demasiado. Tu información no se perdió; intenta nuevamente.");
-  throw lastError instanceof Error ? lastError : new Error("No fue posible conectar con el pasaporte.");
+    if (lastError instanceof DOMException && lastError.name === "AbortError") throw new Error("La conexión tardó más de lo esperado. Intenta nuevamente.");
+    if (lastError instanceof TypeError) throw new Error("No fue posible conectar con Apps Script. Revisa la URL /exec y que el acceso sea para cualquier persona.");
+    throw lastError instanceof Error ? lastError : new Error("No fue posible conectar con el pasaporte.");
+  };
+
+  if (!inflightKey) return request();
+  const existing = inflightReads.get(inflightKey);
+  if (existing) return existing;
+  const pending = request().finally(() => inflightReads.delete(inflightKey));
+  inflightReads.set(inflightKey, pending);
+  return pending;
+}
+
+function readStoredSession(token: string): SessionBundle | null {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SESSION_BUNDLE_KEY) || "null") as StoredSession | null;
+    if (!stored || stored.bundle.token !== token || Date.now() - stored.savedAt > 12 * 60 * 60 * 1000) return null;
+    return stored.bundle;
+  } catch { return null; }
+}
+
+function isExpiredSessionError(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return message.includes("sesión venció") || message.includes("sesion vencio") || message.includes("usuario inactivo");
 }
 
 function decodeAvatar(value: string): AvatarConfig {
@@ -173,6 +225,8 @@ export default function Home() {
   const [busyAction, setBusyAction] = useState("");
   const [bonusCompleted, setBonusCompleted] = useState<string[]>([]);
   const [bonusScores, setBonusScores] = useState<Record<string, number>>({});
+  const [adminDashboardLoaded, setAdminDashboardLoaded] = useState(false);
+  const catalogsRequested = useRef(false);
   const visibleMissions = useMemo(() => user ? missions.filter((m) => m.audience === "Todas las UAD" || m.audience === user.uad) : [], [missions, user]);
   const filteredMissions = missionFilter === "Todas" ? visibleMissions : visibleMissions.filter((m) => m.station === missionFilter);
   const completedVisible = visibleMissions.filter((m) => completed.includes(m.id));
@@ -190,25 +244,56 @@ export default function Home() {
       try { setCatalogs(JSON.parse(cachedCatalogs)); } catch { localStorage.removeItem("pasaporte_catalogs"); }
     }
 
-    callApi("catalogs").then((data) => {
-      setCatalogs(data);
-      localStorage.setItem("pasaporte_catalogs", JSON.stringify(data));
-    }).catch(() => {
-      if (!cachedCatalogs) notify("No fue posible cargar los catálogos. Se muestran opciones de ejemplo.");
-    });
-
     const savedToken = localStorage.getItem("pasaporte_session");
     if (savedToken) {
-      setBusyAction("restoring");
+      const storedBundle = readStoredSession(savedToken);
+      if (storedBundle) applyBundle(storedBundle, false);
+      else setBusyAction("restoring");
       callApi("session", { token: savedToken })
-        .then((data) => applyBundle(data))
-        .catch(() => localStorage.removeItem("pasaporte_session"))
+        .then((data) => applyBundle(data as SessionBundle))
+        .catch((error) => {
+          if (isExpiredSessionError(error)) {
+            localStorage.removeItem("pasaporte_session");
+            localStorage.removeItem(SESSION_BUNDLE_KEY);
+            setUser(null);
+          }
+        })
         .finally(() => setBusyAction(""));
     }
   }, []);
 
+  useEffect(() => {
+    if (!opened || user || authMode !== "register" || !getApiUrl() || catalogsRequested.current) return;
+    catalogsRequested.current = true;
+    callApi("catalogs").then((data) => {
+      const nextCatalogs = data as { cargos: string[]; uads: string[] };
+      setCatalogs(nextCatalogs);
+      localStorage.setItem("pasaporte_catalogs", JSON.stringify(nextCatalogs));
+    }).catch(() => {
+      catalogsRequested.current = false;
+      if (!localStorage.getItem("pasaporte_catalogs")) notify("No fue posible cargar los catálogos. Se muestran opciones de ejemplo.");
+    });
+  }, [authMode, opened, user]);
+
+  useEffect(() => {
+    if (!user || !sessionToken) return;
+    const bundle: SessionBundle = {
+      user,
+      missions,
+      historyMissions,
+      completed,
+      started,
+      history: historyDates,
+      bonusCompleted,
+      bonusScores,
+      token: sessionToken,
+      ...(adminDashboardLoaded ? { adminPeople } : {}),
+    };
+    localStorage.setItem(SESSION_BUNDLE_KEY, JSON.stringify({ savedAt: Date.now(), bundle } satisfies StoredSession));
+  }, [adminDashboardLoaded, adminPeople, bonusCompleted, bonusScores, completed, historyDates, historyMissions, missions, sessionToken, started, user]);
+
   function notify(message: string) { setToast(message); window.setTimeout(() => setToast(""), 2800); }
-  function applyBundle(data: SessionBundle) {
+  function applyBundle(data: SessionBundle, persist = true) {
     setUser(data.user);
     setMissions(data.missions);
     setHistoryMissions(data.historyMissions?.length ? data.historyMissions : data.missions);
@@ -219,13 +304,16 @@ export default function Home() {
     setBonusCompleted(data.bonusCompleted || []);
     setBonusScores(data.bonusScores || {});
     setSessionToken(data.token);
+    setAdminDashboardLoaded(Array.isArray(data.adminPeople));
     localStorage.setItem("pasaporte_session", data.token);
+    if (persist) localStorage.setItem(SESSION_BUNDLE_KEY, JSON.stringify({ savedAt: Date.now(), bundle: data } satisfies StoredSession));
   }
   function turnTo(next: View) {
     if (next === view) return;
     setPageDirection(viewOrder.indexOf(next) >= viewOrder.indexOf(view) ? "next" : "prev");
     setView(next);
     setPageKey((current) => current + 1);
+    if (next === "admin" && user?.role === "ADMIN" && !adminDashboardLoaded) window.setTimeout(() => void refreshAdminDashboard(), 0);
   }
   function exploreStation(station?: string) {
     setMissionFilter(station || "Todas");
@@ -250,7 +338,7 @@ export default function Home() {
     try {
       if (getApiUrl()) {
         const data = await callApi("login", { cedula, password });
-        applyBundle(data);
+        applyBundle(data as SessionBundle);
       } else if (cedula === "1000000000" && password === "Demo1234*") setUser({ ...demoUser, name: "Administrador Festival", cedula, email: "admin@empresa.com", role: "ADMIN", avatar: "avatar:v1:3:1:0:5:1" });
       else if (cedula && password) setUser({ ...demoUser, cedula });
       revealPassport("dashboard");
@@ -265,7 +353,7 @@ export default function Home() {
     try {
       if (getApiUrl()) {
         const data = await callApi("register", { user: newUser, password: String(form.get("password") || "") });
-        applyBundle(data);
+        applyBundle(data as SessionBundle);
       } else setUser(newUser);
       setCompleted([]); setStarted([]); revealPassport("guide"); notify("¡Registro exitoso! Tu pasaporte está listo.");
     } catch (error) { notify(error instanceof Error ? error.message : "No fue posible crear el pasaporte."); }
@@ -286,15 +374,29 @@ export default function Home() {
   }
   async function finishMission(mission: Mission) {
     if (busyAction) return;
+    const previousCompleted = completed;
+    const previousHistoryMissions = historyMissions;
+    const previousHistoryDates = historyDates;
+    const previousStarted = started;
+    const optimisticDate = new Date().toISOString();
+    setCompleted((current) => current.includes(mission.id) ? current : [...current, mission.id]);
+    setHistoryMissions((current) => current.some((item) => item.id === mission.id) ? current : [...current, mission]);
+    setHistoryDates((current) => ({ ...current, [mission.id]: optimisticDate }));
+    setStarted((current) => current.filter((id) => id !== mission.id));
     setBusyAction(`finish-${mission.id}`);
     try {
-      if (getApiUrl()) await callApi("completeMission", { token: sessionToken, missionId: mission.id });
-      setCompleted((current) => current.includes(mission.id) ? current : [...current, mission.id]);
-      setHistoryMissions((current) => current.some((item) => item.id === mission.id) ? current : [...current, mission]);
-      setHistoryDates((current) => ({ ...current, [mission.id]: new Date().toISOString() }));
-      setStarted((current) => current.filter((id) => id !== mission.id));
+      if (getApiUrl()) {
+        const data = await callApi("completeMission", { token: sessionToken, missionId: mission.id }) as { completedAt?: string };
+        if (data.completedAt) setHistoryDates((current) => ({ ...current, [mission.id]: data.completedAt as string }));
+      }
       setStampMission(mission);
-    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible completar la misión."); }
+    } catch (error) {
+      setCompleted(previousCompleted);
+      setHistoryMissions(previousHistoryMissions);
+      setHistoryDates(previousHistoryDates);
+      setStarted(previousStarted);
+      notify(error instanceof Error ? error.message : "No fue posible completar la misión.");
+    }
     finally { setBusyAction(""); }
   }
   async function createAdminMission(mission: Mission) {
@@ -302,7 +404,7 @@ export default function Home() {
     try {
       let created = mission;
       if (getApiUrl()) {
-        const data = await callApi("adminCreateMission", { token: sessionToken, mission });
+        const data = await callApi("adminCreateMission", { token: sessionToken, mission }) as { id: number };
         created = { ...mission, id: data.id };
       }
       setMissions((current) => [...current, created]);
@@ -333,7 +435,8 @@ export default function Home() {
     try {
       if (getApiUrl()) {
         const data = await callApi("adminDashboard", { token: sessionToken });
-        setAdminPeople(data.people || []);
+        setAdminPeople((data as { people?: PersonProgress[] }).people || []);
+        setAdminDashboardLoaded(true);
       }
       notify("Tablero administrativo actualizado.");
     } catch (error) { notify(error instanceof Error ? error.message : "No fue posible actualizar el tablero."); }
@@ -342,24 +445,34 @@ export default function Home() {
   async function saveAvatar() {
     if (!user || busyAction) return;
     const avatar = encodeAvatar(avatarDraft);
+    const previousUser = user;
+    setUser({ ...user, avatar });
+    setAvatarOpen(false);
     setBusyAction("avatar");
     try {
       if (getApiUrl()) await callApi("updateAvatar", { token: sessionToken, avatar });
-      setUser({ ...user, avatar });
-      setAvatarOpen(false);
       notify("Avatar actualizado.");
-    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible actualizar el avatar."); }
+    } catch (error) {
+      setUser(previousUser);
+      notify(error instanceof Error ? error.message : "No fue posible actualizar el avatar.");
+    }
     finally { setBusyAction(""); }
   }
   async function completeBonus(gameId: BonusGameId, score: number) {
     if (bonusCompleted.includes(gameId) || busyAction) return;
+    const previousCompleted = bonusCompleted;
+    const previousScores = bonusScores;
+    setBonusCompleted((current) => current.includes(gameId) ? current : [...current, gameId]);
+    setBonusScores((current) => ({ ...current, [gameId]: score }));
     setBusyAction(`bonus-${gameId}`);
     try {
       if (getApiUrl()) await callApi("completeBonus", { token: sessionToken, gameId, score });
-      setBonusCompleted((current) => current.includes(gameId) ? current : [...current, gameId]);
-      setBonusScores((current) => ({ ...current, [gameId]: score }));
       notify(`¡Bonus completado! Sumaste ${score} puntos.`);
-    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible guardar el bonus."); }
+    } catch (error) {
+      setBonusCompleted(previousCompleted);
+      setBonusScores(previousScores);
+      notify(error instanceof Error ? error.message : "No fue posible guardar el bonus.");
+    }
     finally { setBusyAction(""); }
   }
   function closeStamp() { const allDone = visibleMissions.length > 0 && completedVisible.length >= visibleMissions.length; setStampMission(null); if (allDone) turnTo("complete"); }
@@ -368,8 +481,10 @@ export default function Home() {
     setSessionClosing(true);
     window.setTimeout(() => {
       localStorage.removeItem("pasaporte_session");
+      localStorage.removeItem(SESSION_BUNDLE_KEY);
       setSessionToken(""); setUser(null); setOpened(false); setView("dashboard");
       setBonusCompleted([]); setBonusScores({}); setSessionClosing(false);
+      setAdminDashboardLoaded(false);
     }, 900);
   }
 
