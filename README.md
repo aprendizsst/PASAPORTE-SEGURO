@@ -9,8 +9,8 @@ Versión completa de la aplicación web para GitHub Pages y Google Apps Script. 
 - Panel administrador con creación, edición, eliminación segura, códigos únicos y seguimiento de misiones.
 - Creador de avatares 3D con seis tonos de piel, siete colores y estilos de cabello, ocho colores de camiseta, hasta tres accesorios simultáneos y colores independientes.
 - Pestaña Bonus con sopa de letras, sudoku seguro y tiro al blanco.
-- **Ruta Viva del Festival 3D** con mundos flotantes, nave espacial, avatar visible en la cabina y acceso filtrado a las misiones de cada estación.
-- Colección automática de seis insignias, sin agregar columnas al archivo de Google Sheets.
+- **Ruta Viva del Festival 3D** con las seis islas siempre visibles —incluida Ambiental—, nave espacial, avatar visible en la cabina y acceso filtrado a las misiones de cada estación.
+- Colección de insignias administrable: creación, edición, retiro, 10 iconos, dos colores, criterios y metas configurables.
 - Certificado holográfico personalizado en PNG, con avatar 3D y logos integrados sin fondo, generado directamente en el dispositivo.
 - Sellado protegido por código único de misión y carga opcional u obligatoria de fotos o videos como evidencia.
 - Portada dinámica con profundidad, brillo, constelaciones y ruta de vuelo.
@@ -19,6 +19,8 @@ Versión completa de la aplicación web para GitHub Pages y Google Apps Script. 
 - Carga diferida de minijuegos, caché por usuario, restauración de sesión, reintentos progresivos e identificadores de operación para reducir cargas y duplicados.
 - Inicio de sesión optimizado por búsqueda directa, reutilización segura de sesión y restauración instantánea desde el dispositivo.
 - Interacciones optimistas para misiones, avatar y bonus: la pantalla responde primero y confirma el guardado en segundo plano.
+- Gestión administrativa de usuarios con búsqueda, eliminación anonimizada y conservación del historial.
+- Recuperación de contraseña por correo y código de respaldo de un solo uso generado por el administrador.
 
 La eliminación administrativa desactiva la misión y conserva los registros históricos de los participantes.
 
@@ -36,7 +38,7 @@ La eliminación administrativa desactiva la misión y conserva los registros his
 2. Abra **Extensiones → Apps Script**.
 3. Reemplace el contenido de `Code.gs` por el archivo `apps-script/Code.gs` de este proyecto.
 4. Guarde y ejecute una vez la función `setupPasaporteSeguro`. Autorice el acceso solicitado.
-5. Regrese a la hoja. Se habrán creado las pestañas `Usuarios`, `Misiones`, `Progreso`, `Sesiones`, `Catalogos`, `Bonus` y `Evidencias`.
+5. Regrese a la hoja. Se habrán creado las pestañas `Usuarios`, `Misiones`, `Progreso`, `Sesiones`, `Catalogos`, `Bonus`, `Evidencias`, `Insignias` y `Recuperaciones`.
 6. En `Catalogos`, reemplace los cargos y UAD de ejemplo por sus datos reales. Conserve `Tipo` como `CARGO` o `UAD` y `Activo` como `TRUE`.
 
 ## 2. Crear el primer administrador
@@ -52,6 +54,8 @@ En Apps Script, abra **Configuración del proyecto → Propiedades del script** 
 
 Ejecute una vez `crearAdministradorInicial`. Cuando confirme que el administrador puede ingresar, elimine la propiedad `ADMIN_PASSWORD`; la hoja conserva únicamente el hash seguro de la contraseña.
 
+Si el administrador pierde el acceso y tampoco puede recibir el código por correo, cree temporalmente la propiedad `ADMIN_RESET_PASSWORD`, conserve `ADMIN_CEDULA` y ejecute `restablecerAdministradorDesdePropiedades`. La función cambia la contraseña, cierra las sesiones anteriores y elimina automáticamente la propiedad temporal.
+
 ## 3. Publicar la API
 
 1. En Apps Script seleccione **Implementar → Nueva implementación → Aplicación web**.
@@ -63,13 +67,15 @@ Ejecute una vez `crearAdministradorInicial`. Cuando confirme que el administrado
 
 > El backend valida la sesión y el rol en cada operación administrativa. Las contraseñas no se guardan en texto visible.
 
+La recuperación normal envía un código de un solo uso al correo registrado. Como respaldo, el administrador puede generar desde la pestaña **Usuarios** un código temporal válido por 24 horas. Ambos códigos se almacenan cifrados y se invalidan después de usarse.
+
 ### Actualización desde una versión anterior
 
-Esta actualización no elimina ni renombra hojas, columnas o registros. Reemplace `Code.gs`, guarde y ejecute nuevamente `setupPasaporteSeguro` **una sola vez**. La función conserva las hojas existentes, agrega las columnas faltantes, crea `Evidencias` y genera un código único para cada misión existente.
+Esta actualización no elimina ni renombra hojas, columnas o registros. Reemplace `Code.gs`, guarde y ejecute nuevamente `setupPasaporteSeguro` **una sola vez**. La función conserva las hojas existentes, agrega las columnas faltantes, crea `Evidencias`, `Insignias` y `Recuperaciones`, genera códigos de misión y carga las seis insignias iniciales.
 
 La primera ejecución que reciba una evidencia solicitará permiso para Google Drive. Los archivos se guardan en la carpeta privada `PASAPORTE_SEGURO_EVIDENCIAS`; la hoja conserva únicamente sus metadatos y enlaces.
 
-Las insignias y la tarjeta final se calculan usando `Misiones`, `Progreso` y `Bonus`; no requieren una pestaña adicional.
+Las reglas visuales de las insignias se guardan en `Insignias`; el desbloqueo se calcula con `Misiones`, `Progreso` y `Bonus`, sin escribir una fila por usuario.
 
 La Ruta Viva 3D también usa las misiones existentes: no crea hojas, columnas ni consultas adicionales. El viaje de la nave se ejecuta localmente y al llegar solo aplica el filtro de la estación seleccionada.
 
@@ -108,7 +114,7 @@ Cambie únicamente `true` por `false` si necesita desactivar temporalmente una c
 ## Optimización y concurrencia
 
 - El login consulta únicamente la columna y la fila del usuario solicitado; no vuelve a leer ni guardar en caché toda la hoja `Usuarios`.
-- La estructura de las siete hojas se valida durante `setupPasaporteSeguro`, no en cada clic del participante.
+- La estructura de las nueve hojas se valida durante `setupPasaporteSeguro`, no en cada clic del participante.
 - Las sesiones válidas se reutilizan y su caché se conserva durante la actividad para evitar recorrer `Sesiones` repetidamente.
 - El último tablero válido se muestra inmediatamente desde el dispositivo y se confirma en segundo plano con Apps Script.
 - Los catálogos se solicitan solo cuando una persona abre el formulario de registro; no ralentizan el inicio de sesión.
@@ -135,6 +141,8 @@ Estas medidas reducen notablemente las consultas, pero Google Apps Script y Goog
 - `Catalogos`: listas editables de cargos y UAD.
 - `Bonus`: resultados y puntajes de los minijuegos.
 - `Evidencias`: metadatos y enlaces privados de fotos o videos; el archivo binario se conserva en Google Drive.
+- `Insignias`: diseño, icono, colores, criterio, meta y estado de cada reconocimiento.
+- `Recuperaciones`: códigos cifrados de un solo uso, vencimiento, intentos y canal de recuperación.
 
 ## Verificación después de publicar
 
@@ -142,7 +150,8 @@ Estas medidas reducen notablemente las consultas, pero Google Apps Script y Goog
 2. Abra el sitio publicado y actualice con `Ctrl + F5`.
 3. Pruebe registro, inicio de sesión, cambio de avatar, una misión y un minijuego.
 4. En la Ruta Viva 3D seleccione una estación, espere el viaje de la nave y confirme que se muestran únicamente las misiones de ese destino.
-5. Ingrese como administrador y confirme que puede crear y editar una misión, ver su código, exigir evidencia y revisar la pestaña Evidencias.
+5. Ingrese como administrador y confirme que puede crear y editar una misión, administrar insignias, buscar usuarios, generar un código de respaldo y revisar Evidencias.
 6. Inicie esa misión con un usuario, pruebe un código incorrecto y luego selle con el código correcto y una foto o video.
+7. Desde la portada use **¿Olvidaste tu contraseña?** y compruebe el código recibido en el correo registrado.
 
 Después de reemplazar `apps-script/Code.gs`, ejecute `setupPasaporteSeguro` una vez y cree una **nueva versión** de la implementación web. La migración conserva los registros existentes.

@@ -13,9 +13,24 @@ export type FestivalBadge = {
   title: string;
   description: string;
   color: string;
+  secondaryColor: string;
+  icon: string;
   unlocked: boolean;
   progress: number;
   goal: number;
+};
+
+export type BadgeDefinition = {
+  id: string;
+  title: string;
+  description: string;
+  icon: string;
+  primaryColor: string;
+  secondaryColor: string;
+  criterion: "MISSIONS" | "POINTS" | "BONUS" | "STATIONS" | "STATION" | "ALL_MISSIONS";
+  goal: number;
+  station?: string;
+  order?: number;
 };
 
 type BadgeInput = {
@@ -23,21 +38,32 @@ type BadgeInput = {
   completed: number[];
   points: number;
   bonusCompleted: string[];
+  definitions?: BadgeDefinition[];
 };
 
-export function buildBadges({ missions, completed, points, bonusCompleted }: BadgeInput): FestivalBadge[] {
+const defaultBadgeDefinitions: BadgeDefinition[] = [
+  { id: "first-stamp", title: "Primer sello", description: "Completaste tu primera misión.", icon: "star", primaryColor: "#9d5cff", secondaryColor: "#d7c7ff", criterion: "MISSIONS", goal: 1 },
+  { id: "route-keeper", title: "Guardián de la ruta", description: "Visitaste tres estaciones diferentes.", icon: "shield", primaryColor: "#12cfe0", secondaryColor: "#a5f4f7", criterion: "STATIONS", goal: 3 },
+  { id: "bonus-explorer", title: "Explorador bonus", description: "Superaste tu primer minijuego.", icon: "rocket", primaryColor: "#ffb703", secondaryColor: "#ffe39b", criterion: "BONUS", goal: 1 },
+  { id: "bright-mind", title: "Mente brillante", description: "Completaste los tres retos bonus.", icon: "sparkle", primaryColor: "#ff5c9b", secondaryColor: "#ffc2d9", criterion: "BONUS", goal: 3 },
+  { id: "point-collector", title: "Coleccionista", description: "Alcanzaste 500 puntos en tu recorrido.", icon: "medal", primaryColor: "#43d17d", secondaryColor: "#baf3cf", criterion: "POINTS", goal: 500 },
+  { id: "festival-ambassador", title: "Embajador del Festival", description: "Sellaste todas las misiones de tu pasaporte.", icon: "trophy", primaryColor: "#7253dc", secondaryColor: "#cfc2ff", criterion: "ALL_MISSIONS", goal: 1 },
+];
+
+export function buildBadges({ missions, completed, points, bonusCompleted, definitions }: BadgeInput): FestivalBadge[] {
   const completedMissions = missions.filter((mission) => completed.includes(mission.id));
   const completedStations = new Set(completedMissions.map((mission) => mission.station)).size;
   const allMissionsDone = missions.length > 0 && completedMissions.length >= missions.length;
-
-  return [
-    { id: "first-stamp", title: "Primer sello", description: "Completaste tu primera misión.", color: "#9d5cff", unlocked: completedMissions.length >= 1, progress: Math.min(completedMissions.length, 1), goal: 1 },
-    { id: "route-keeper", title: "Guardián de la ruta", description: "Visitaste tres estaciones diferentes.", color: "#12cfe0", unlocked: completedStations >= 3, progress: Math.min(completedStations, 3), goal: 3 },
-    { id: "bonus-explorer", title: "Explorador bonus", description: "Superaste tu primer minijuego.", color: "#ffb703", unlocked: bonusCompleted.length >= 1, progress: Math.min(bonusCompleted.length, 1), goal: 1 },
-    { id: "bright-mind", title: "Mente brillante", description: "Completaste los tres retos bonus.", color: "#ff5c9b", unlocked: bonusCompleted.length >= 3, progress: Math.min(bonusCompleted.length, 3), goal: 3 },
-    { id: "point-collector", title: "Coleccionista", description: "Alcanzaste 500 puntos en tu recorrido.", color: "#43d17d", unlocked: points >= 500, progress: Math.min(points, 500), goal: 500 },
-    { id: "festival-ambassador", title: "Embajador del Festival", description: "Sellaste todas las misiones de tu pasaporte.", color: "#7253dc", unlocked: allMissionsDone, progress: Math.min(completedMissions.length, missions.length || 1), goal: missions.length || 1 },
-  ];
+  return (definitions?.length ? definitions : defaultBadgeDefinitions).map((definition) => {
+    let current = completedMissions.length;
+    let goal = Math.max(1, definition.goal || 1);
+    if (definition.criterion === "POINTS") current = points;
+    else if (definition.criterion === "BONUS") current = bonusCompleted.length;
+    else if (definition.criterion === "STATIONS") current = completedStations;
+    else if (definition.criterion === "STATION") current = completedMissions.some((mission) => mission.station === definition.station) ? 1 : 0;
+    else if (definition.criterion === "ALL_MISSIONS") { current = allMissionsDone ? 1 : 0; goal = 1; }
+    return { id: definition.id, title: definition.title, description: definition.description, icon: definition.icon || "star", color: definition.primaryColor, secondaryColor: definition.secondaryColor || definition.primaryColor, unlocked: current >= goal, progress: Math.min(current, goal), goal };
+  });
 }
 
 export function FestivalRoute({ missions, completed, started, avatar, travelerName, onExplore }: {
@@ -51,14 +77,19 @@ export function FestivalRoute({ missions, completed, started, avatar, travelerNa
   const stops = useMemo(() => {
     const grouped = new Map<string, FestivalMission[]>();
     missions.forEach((mission) => grouped.set(mission.station, [...(grouped.get(mission.station) || []), mission]));
-    return Array.from(grouped.entries()).map(([station, items]) => ({
-      station,
-      color: items[0].color,
-      complete: items.every((mission) => completed.includes(mission.id)),
+    const worlds = [
+      ["Estación Diversidad", "#9d5cff"], ["Estación Felicidad", "#ffb703"],
+      ["Estación Salud", "#43d17d"], ["Estación Amor Propio", "#ff5c9b"],
+      ["Estación Seguridad", "#12cfe0"], ["Estación Ambiental", "#8bd33f"],
+    ];
+    return worlds.map(([station, color]) => {
+      const items = grouped.get(station) || [];
+      return { station, color: items[0]?.color || color, complete: items.length > 0 && items.every((mission) => completed.includes(mission.id)),
       current: items.some((mission) => started.includes(mission.id)),
       completedCount: items.filter((mission) => completed.includes(mission.id)).length,
       total: items.length,
-    }));
+      };
+    });
   }, [completed, missions, started]);
   const positions = [[12, 67], [27, 27], [43, 62], [59, 22], [76, 59], [90, 27]];
   const mobilePositions = [[21, 18], [73, 29], [25, 43], [72, 56], [25, 70], [72, 83]];
@@ -99,7 +130,7 @@ export function FestivalRoute({ missions, completed, started, avatar, travelerNa
         const shortName = stop.station.replace("Estación ", "");
         return <button
           type="button"
-          className={`world-stop world-island world-kind-${index} ${stop.complete ? "is-complete" : ""} ${stop.current ? "is-current" : ""} ${selectedIndex === index ? "is-selected" : ""}`}
+          className={`world-stop world-island world-kind-${worldKind(stop.station)} ${stop.complete ? "is-complete" : ""} ${stop.current ? "is-current" : ""} ${selectedIndex === index ? "is-selected" : ""}`}
           style={{ "--world": stop.color, "--mobile-left": `${mobilePositions[index][0]}%`, "--mobile-top": `${mobilePositions[index][1]}%`, left: `${position[0]}%`, top: `${position[1]}%` } as React.CSSProperties}
           key={stop.station}
           onClick={() => travelTo(index)}
@@ -110,11 +141,11 @@ export function FestivalRoute({ missions, completed, started, avatar, travelerNa
             <i className="island-shadow" />
             <i className="island-rock" />
             <i className="island-top" />
-            <i className="world-landmark"><b>{worldGlyph(index)}</b></i>
+            <i className="world-landmark"><b>{worldGlyph(stop.station)}</b></i>
             <i className="world-prop prop-one" /><i className="world-prop prop-two" />
             {stop.complete && <i className="world-check">✓</i>}
           </span>
-          <span className="world-copy"><b>{shortName}</b><small>{stop.completedCount}/{stop.total} misiones</small><i>{selectedIndex === index ? "Preparando viaje…" : "Viajar aquí"}</i></span>
+          <span className="world-copy"><b>{shortName}</b><small>{stop.total ? `${stop.completedCount}/${stop.total} misiones` : "Próximamente"}</small><i>{selectedIndex === index ? "Preparando viaje…" : "Viajar aquí"}</i></span>
         </button>;
       })}
       {!!stops.length && <div className={`festival-spacecraft ${travelling ? "launching" : "docked"}`} style={{ "--ship-x": `${shipPosition.x}%`, "--ship-y": `${shipPosition.y}%`, "--ship-mx": `${shipPosition.mx}%`, "--ship-my": `${shipPosition.my}%`, "--skin": avatarColors.skin, "--hair": avatarColors.hair, "--shirt": avatarColors.shirt } as React.CSSProperties} title={`${travelerName} viaja en la nave`}>
@@ -127,8 +158,22 @@ export function FestivalRoute({ missions, completed, started, avatar, travelerNa
   </section>;
 }
 
-function worldGlyph(index: number) {
-  return ["✦", "☀", "◆", "+", "♥", "♧"][index] || "✦";
+function worldGlyph(station: string) {
+  if (station.includes("Felicidad")) return "☀";
+  if (station.includes("Salud")) return "+";
+  if (station.includes("Amor Propio")) return "♥";
+  if (station.includes("Seguridad")) return "◆";
+  if (station.includes("Ambiental")) return "♧";
+  return "✦";
+}
+
+function worldKind(station: string) {
+  if (station.includes("Felicidad")) return 1;
+  if (station.includes("Seguridad")) return 2;
+  if (station.includes("Salud")) return 3;
+  if (station.includes("Amor Propio")) return 4;
+  if (station.includes("Ambiental")) return 5;
+  return 0;
 }
 
 export function BadgeCollection({ badges, onExplore }: { badges: FestivalBadge[]; onExplore: () => void }) {
@@ -138,8 +183,8 @@ export function BadgeCollection({ badges, onExplore }: { badges: FestivalBadge[]
       <div><p className="step-label">COLECCIÓN DE INSIGNIAS</p><h2>Reconocimientos de tu aventura</h2><p>Cada insignia celebra una forma diferente de cuidar, aprender y participar.</p></div>
       <div className="badge-counter"><span>✦</span><b>{unlocked}/{badges.length}</b><small>desbloqueadas</small></div>
     </section>
-    <div className="badge-showcase">{badges.map((badge, index) => <article className={`festival-badge ${badge.unlocked ? "unlocked" : "locked"}`} style={{ "--badge": badge.color, "--delay": `${index * .07}s` } as React.CSSProperties} key={badge.id}>
-      <div className="badge-medal"><span><BadgeIcon id={badge.id} /></span><i /></div>
+    <div className="badge-showcase">{badges.map((badge, index) => <article className={`festival-badge ${badge.unlocked ? "unlocked" : "locked"}`} style={{ "--badge": badge.color, "--badge-secondary": badge.secondaryColor, "--delay": `${index * .07}s` } as React.CSSProperties} key={badge.id}>
+      <div className="badge-medal"><span><BadgeIcon icon={badge.icon} /></span><i /></div>
       <small>{badge.unlocked ? "DESBLOQUEADA" : "POR DESCUBRIR"}</small><h3>{badge.title}</h3><p>{badge.description}</p>
       <div className="badge-progress"><span><i style={{ width: `${Math.min(100, Math.round((badge.progress / badge.goal) * 100))}%` }} /></span><b>{badge.progress}/{badge.goal}</b></div>
     </article>)}</div>
@@ -205,13 +250,17 @@ export function FinalPassportCard({ name, uad, cedula, avatar, points, missions,
   </section>;
 }
 
-function BadgeIcon({ id }: { id: string }) {
-  if (id === "first-stamp") return <svg viewBox="0 0 24 24"><path d="m12 3 2.3 4.7 5.2.8-3.8 3.7.9 5.2-4.6-2.5-4.6 2.5.9-5.2-3.8-3.7 5.2-.8L12 3Z" /></svg>;
-  if (id === "route-keeper") return <svg viewBox="0 0 24 24"><path d="M5 19c3-8 7-12 14-14M5 19l3-1M5 19l1-3" /><circle cx="7" cy="8" r="2" /><circle cx="17" cy="15" r="2" /></svg>;
-  if (id === "bonus-explorer") return <svg viewBox="0 0 24 24"><path d="M5 9h14l-1 11H6L5 9ZM8 9V7a4 4 0 0 1 8 0v2" /><path d="m12 12 .8 1.8 2 .2-1.5 1.4.4 2-1.7-1-1.7 1 .4-2-1.5-1.4 2-.2.8-1.8Z" /></svg>;
-  if (id === "bright-mind") return <svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M8.5 15.5C6.9 14.4 6 12.6 6 10.5a6 6 0 1 1 12 0c0 2.1-.9 3.9-2.5 5" /><path d="M9 10h6M12 7v6" /></svg>;
-  if (id === "point-collector") return <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /><path d="M14.5 8.8c-.6-.5-1.4-.8-2.5-.8-1.4 0-2.5.7-2.5 1.8 0 2.7 5.2 1 5.2 3.8 0 1.3-1.1 2.2-2.7 2.2-1.1 0-2.1-.4-2.8-1M12 6v12" /></svg>;
-  return <svg viewBox="0 0 24 24"><path d="M8 4h8v5a4 4 0 0 1-8 0V4ZM12 13v5M8 21h8M9 18h6" /><path d="M8 6H4v2c0 2 1.4 3 4 3M16 6h4v2c0 2-1.4 3-4 3" /></svg>;
+function BadgeIcon({ icon }: { icon: string }) {
+  if (icon === "shield") return <svg viewBox="0 0 24 24"><path d="M12 3 20 6v5.5c0 4.7-3.2 7.7-8 9.5-4.8-1.8-8-4.8-8-9.5V6l8-3Z" /><path d="m8.5 12 2.2 2.2 4.8-4.8" /></svg>;
+  if (icon === "rocket") return <svg viewBox="0 0 24 24"><path d="M14 4c3-1 5-1 6-1 0 1 0 3-1 6l-6 6-4-4 5-7Z" /><path d="m9 11-4 1-2 4 5 1M13 15l-1 4-4 2-1-5M10 14l-3 3" /><circle cx="15.5" cy="7.5" r="1.5" /></svg>;
+  if (icon === "sparkle") return <svg viewBox="0 0 24 24"><path d="m12 2 1.5 5.2L18 9l-4.5 1.8L12 16l-1.5-5.2L6 9l4.5-1.8L12 2Z" /><path d="m19 15 .7 2.3 2.3.7-2.3.7L19 22l-.7-2.3L16 19l2.3-.7L19 15Z" /></svg>;
+  if (icon === "medal") return <svg viewBox="0 0 24 24"><path d="m7 3 5 7 5-7M12 10a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z" /><path d="m12 12 1 2 2 .3-1.5 1.4.4 2-1.9-1-1.9 1 .4-2L9 14.3l2-.3 1-2Z" /></svg>;
+  if (icon === "leaf") return <svg viewBox="0 0 24 24"><path d="M20 4C12 4 6 7 5 15c4 1 8 0 11-4" /><path d="M4 21c2-6 6-10 12-13M20 4c0 8-4 13-11 13" /></svg>;
+  if (icon === "heart") return <svg viewBox="0 0 24 24"><path d="M20.5 9c0 5-8.5 10-8.5 10S3.5 14 3.5 9A4.7 4.7 0 0 1 12 6.3 4.7 4.7 0 0 1 20.5 9Z" /></svg>;
+  if (icon === "planet") return <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5" /><path d="M3 15c2 2 7 1 12-1s8-5 6-7M5 8c3-1 8 0 12 3s5 6 3 8" /></svg>;
+  if (icon === "hand") return <svg viewBox="0 0 24 24"><path d="M6 12V7a1.5 1.5 0 0 1 3 0v4-6a1.5 1.5 0 0 1 3 0v6-5a1.5 1.5 0 0 1 3 0v5-3a1.5 1.5 0 0 1 3 0v7c0 4-2.5 6-6 6-3 0-5-1.5-7-5l-2-3a1.7 1.7 0 0 1 2.8-1.9L8 14" /></svg>;
+  if (icon === "trophy") return <svg viewBox="0 0 24 24"><path d="M8 4h8v5a4 4 0 0 1-8 0V4ZM12 13v5M8 21h8M9 18h6" /><path d="M8 6H4v2c0 2 1.4 3 4 3M16 6h4v2c0 2-1.4 3-4 3" /></svg>;
+  return <svg viewBox="0 0 24 24"><path d="m12 3 2.3 4.7 5.2.8-3.8 3.7.9 5.2-4.6-2.5-4.6 2.5.9-5.2-3.8-3.7 5.2-.8L12 3Z" /></svg>;
 }
 
 function parseAvatarColors(value: string) {

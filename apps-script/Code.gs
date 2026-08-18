@@ -11,6 +11,8 @@ const SHEETS = {
   CATALOGS: "Catalogos",
   BONUS: "Bonus",
   EVIDENCE: "Evidencias",
+  BADGES: "Insignias",
+  RECOVERY: "Recuperaciones",
 };
 
 const HEADERS = {
@@ -21,15 +23,18 @@ const HEADERS = {
   Catalogos: ["Tipo", "Valor", "Activo"],
   Bonus: ["Id", "UsuarioId", "JuegoId", "Puntaje", "CompletadoEn"],
   Evidencias: ["Id", "UsuarioId", "MisionId", "ArchivoId", "NombreArchivo", "TipoMime", "TamanoBytes", "Url", "Estado", "CreadoEn"],
+  Insignias: ["Id", "Titulo", "Descripcion", "Icono", "ColorPrimario", "ColorSecundario", "TipoCriterio", "Meta", "Estacion", "Activa", "Orden", "CreadaEn", "CreadaPor", "EditadaEn"],
+  Recuperaciones: ["Id", "UsuarioId", "CodigoHash", "ExpiraEn", "Intentos", "Usado", "Canal", "CreadoEn"],
 };
 
 const CACHE_KEYS = {
   CATALOGS: "pasaporte:catalogs:v1",
   MISSIONS: "pasaporte:missions:v1",
   MISSIONS_ALL: "pasaporte:missions:all:v1",
-  ADMIN_DASHBOARD: "pasaporte:admin-dashboard:v1",
+  ADMIN_DASHBOARD: "pasaporte:admin-dashboard:v2",
   SESSION_CLEANUP: "pasaporte:session-cleanup:v1",
   ADMIN_EVIDENCE: "pasaporte:admin-evidence:v1",
+  BADGES: "pasaporte:badges:v1",
 };
 
 const CACHE_TTL = {
@@ -40,7 +45,7 @@ const CACHE_TTL = {
   ACTIVITY: 600,
 };
 
-const WRITE_ACTIONS = ["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "adminCreateMission", "adminEditMission", "adminDeleteMission"];
+const WRITE_ACTIONS = ["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminDeleteUser", "adminCreateRecoveryCode"];
 
 function doGet() {
   return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready" } });
@@ -66,9 +71,16 @@ function doPost(event) {
     else if (action === "completeMission") data = completeMissionApi_(request);
     else if (action === "updateAvatar") data = updateAvatarApi_(request);
     else if (action === "completeBonus") data = completeBonusApi_(request);
+    else if (action === "requestPasswordReset") data = requestPasswordResetApi_(request);
+    else if (action === "resetPassword") data = resetPasswordApi_(request);
     else if (action === "adminCreateMission") data = adminCreateMissionApi_(request);
     else if (action === "adminEditMission") data = adminEditMissionApi_(request);
     else if (action === "adminDeleteMission") data = adminDeleteMissionApi_(request);
+    else if (action === "adminCreateBadge") data = adminCreateBadgeApi_(request);
+    else if (action === "adminEditBadge") data = adminEditBadgeApi_(request);
+    else if (action === "adminDeleteBadge") data = adminDeleteBadgeApi_(request);
+    else if (action === "adminDeleteUser") data = adminDeleteUserApi_(request);
+    else if (action === "adminCreateRecoveryCode") data = adminCreateRecoveryCodeApi_(request);
     else if (action === "adminDashboard") data = adminDashboardApi_(request);
     else throw new Error("Acción no reconocida.");
 
@@ -84,7 +96,10 @@ function setupPasaporteSeguro() {
   seedCatalogs_();
   seedMissions_();
   seedMissionCodes_();
-  return "Estructura actualizada sin borrar datos. Las misiones ya tienen códigos únicos y la hoja de evidencias está lista.";
+  seedBadges_();
+  invalidateMissionCaches_();
+  CacheService.getScriptCache().remove(CACHE_KEYS.BADGES);
+  return "Estructura actualizada sin borrar datos. Misiones, insignias, evidencias y recuperación de contraseñas están listas.";
 }
 
 /**
@@ -116,6 +131,28 @@ function crearAdministradorInicial() {
     CreadoEn: new Date(),
   });
   return "Administrador creado correctamente.";
+}
+
+/**
+ * Respaldo de emergencia para el propietario del Apps Script.
+ * Configure temporalmente ADMIN_CEDULA y ADMIN_RESET_PASSWORD en Propiedades del script,
+ * ejecute esta función y elimine ADMIN_RESET_PASSWORD al terminar.
+ */
+function restablecerAdministradorDesdePropiedades() {
+  ensureStructure_();
+  const props = PropertiesService.getScriptProperties();
+  const cedula = required_(props.getProperty("ADMIN_CEDULA"), "Falta ADMIN_CEDULA en Propiedades del script.");
+  const password = required_(props.getProperty("ADMIN_RESET_PASSWORD"), "Falta ADMIN_RESET_PASSWORD en Propiedades del script.");
+  if (password.length < 8 || password.length > 128) throw new Error("ADMIN_RESET_PASSWORD debe tener entre 8 y 128 caracteres.");
+  const user = findUserByCedula_(cedula);
+  if (!user || String(user.Rol) !== "ADMIN" || !truthy_(user.Activo)) throw new Error("No existe un administrador activo con esa cédula.");
+  const salt = Utilities.getUuid();
+  updateObjectRow_(SHEETS.USERS, user._row, { PasswordSalt: salt, PasswordHash: hashPassword_(password, salt) });
+  revokeUserSessions_(user.Id);
+  invalidateUserCache_(user);
+  clearLoginRate_(cedula);
+  props.deleteProperty("ADMIN_RESET_PASSWORD");
+  return "Contraseña administrativa restablecida. La propiedad temporal fue eliminada.";
 }
 
 function catalogsApi_() {
@@ -170,6 +207,7 @@ function loginApi_(request) {
   enforceLoginRate_(cedula);
   const user = findUserByCedula_(cedula);
   if (!user || !truthy_(user.Activo)) throw new Error("Cédula o contraseña incorrecta.");
+  if (!String(user.PasswordSalt || "") || !String(user.PasswordHash || "")) throw new Error("Tu usuario necesita restablecer la contraseña. Usa la opción ¿Olvidaste tu contraseña?");
   if (hashPassword_(String(request.password || ""), String(user.PasswordSalt)) !== String(user.PasswordHash)) throw new Error("Cédula o contraseña incorrecta.");
   clearLoginRate_(cedula);
 
@@ -196,6 +234,60 @@ function sessionApi_(request) {
   const bundle = userBundle_(user);
   bundle.token = String(request.token);
   return bundle;
+}
+
+function requestPasswordResetApi_(request) {
+  const cedula = cleanId_(request.cedula);
+  const email = normalize_(request.email);
+  required_(cedula, "La cédula es obligatoria.");
+  required_(email, "El correo es obligatorio.");
+  enforceRecoveryRequestRate_(cedula);
+  const user = findUserByCedula_(cedula);
+  const generic = { requested: true, message: "Si los datos coinciden, recibirás un código de recuperación en tu correo." };
+  if (!user || !truthy_(user.Activo) || normalize_(user.Correo) !== email) return generic;
+  const code = generateRecoveryCode_(6);
+  const recovery = createRecovery_(user.Id, code, "EMAIL", 15);
+  try {
+    MailApp.sendEmail({
+      to: String(user.Correo),
+      subject: "Código para restablecer tu Pasaporte Seguro",
+      body: "Hola " + String(user.Nombre || "viajero") + ",\n\nTu código de recuperación es: " + code + "\n\nEste código vence en 15 minutos y solo puede usarse una vez. Si no solicitaste el cambio, ignora este mensaje.\n\nPasaporte Seguro · Festival 2026",
+      name: "Pasaporte Seguro",
+    });
+  } catch (error) {
+    updateObjectRow_(SHEETS.RECOVERY, recovery._row, { Usado: true });
+    throw new Error("No fue posible enviar el código en este momento. Solicita al administrador un código de respaldo.");
+  }
+  return generic;
+}
+
+function resetPasswordApi_(request) {
+  const cedula = cleanId_(request.cedula);
+  const code = normalizeRecoveryCode_(request.code);
+  const password = String(request.password || "");
+  required_(cedula, "La cédula es obligatoria.");
+  if (code.length < 6) throw new Error("Ingresa el código completo.");
+  if (password.length < 8 || password.length > 128) throw new Error("La nueva contraseña debe tener entre 8 y 128 caracteres.");
+  const user = findUserByCedula_(cedula);
+  if (!user || !truthy_(user.Activo)) throw new Error("El código no es válido o ya venció.");
+  const rows = findObjectsByField_(SHEETS.RECOVERY, "UsuarioId", user.Id, String)
+    .filter(function (row) { return !truthy_(row.Usado) && new Date(row.ExpiraEn).getTime() > Date.now(); })
+    .sort(function (a, b) { return new Date(b.CreadoEn).getTime() - new Date(a.CreadoEn).getTime(); });
+  let matched = null;
+  rows.some(function (row) {
+    if (Number(row.Intentos || 0) >= 5) return false;
+    if (hashPassword_(code, String(row.Id)) === String(row.CodigoHash)) { matched = row; return true; }
+    updateObjectRow_(SHEETS.RECOVERY, row._row, { Intentos: Number(row.Intentos || 0) + 1 });
+    return false;
+  });
+  if (!matched) throw new Error("El código no es válido o ya venció.");
+  const salt = Utilities.getUuid();
+  updateObjectRow_(SHEETS.USERS, user._row, { PasswordSalt: salt, PasswordHash: hashPassword_(password, salt) });
+  updateObjectRow_(SHEETS.RECOVERY, matched._row, { Usado: true });
+  revokeUserSessions_(user.Id);
+  invalidateUserCache_(user);
+  clearLoginRate_(cedula);
+  return { reset: true };
 }
 
 function startMissionApi_(request) {
@@ -308,9 +400,80 @@ function adminDeleteMissionApi_(request) {
   return { missionId: Number(mission.Id), deleted: true };
 }
 
+function adminCreateBadgeApi_(request) {
+  const admin = requireAdmin_(request.token);
+  const badge = validateBadgeInput_(request.badge || {});
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) throw new Error("Hay otra insignia guardándose. Intenta nuevamente.");
+  let id;
+  try {
+    id = Utilities.getUuid();
+    appendObject_(SHEETS.BADGES, {
+      Id: id, Titulo: badge.title, Descripcion: badge.description, Icono: badge.icon,
+      ColorPrimario: badge.primaryColor, ColorSecundario: badge.secondaryColor,
+      TipoCriterio: badge.criterion, Meta: badge.goal, Estacion: badge.station,
+      Activa: true, Orden: badge.order, CreadaEn: new Date(), CreadaPor: admin.Id, EditadaEn: "",
+    });
+  } finally { lock.releaseLock(); }
+  invalidateBadgeCaches_();
+  return { badge: publicBadge_(sheetObjects_(SHEETS.BADGES).find(function (row) { return String(row.Id) === String(id); })) };
+}
+
+function adminEditBadgeApi_(request) {
+  requireAdmin_(request.token);
+  const badge = validateBadgeInput_(request.badge || {});
+  const current = sheetObjects_(SHEETS.BADGES).find(function (row) { return String(row.Id) === String(request.badge && request.badge.id) && truthy_(row.Activa); });
+  if (!current) throw new Error("La insignia ya no existe o fue eliminada.");
+  updateObjectRow_(SHEETS.BADGES, current._row, {
+    Titulo: badge.title, Descripcion: badge.description, Icono: badge.icon,
+    ColorPrimario: badge.primaryColor, ColorSecundario: badge.secondaryColor,
+    TipoCriterio: badge.criterion, Meta: badge.goal, Estacion: badge.station,
+    Orden: badge.order, EditadaEn: new Date(),
+  });
+  invalidateBadgeCaches_();
+  const updated = objectAtRow_(SHEETS.BADGES, current._row);
+  return { badge: publicBadge_(updated) };
+}
+
+function adminDeleteBadgeApi_(request) {
+  requireAdmin_(request.token);
+  const badge = sheetObjects_(SHEETS.BADGES).find(function (row) { return String(row.Id) === String(request.badgeId) && truthy_(row.Activa); });
+  if (!badge) throw new Error("La insignia ya no existe o fue eliminada.");
+  updateObjectRow_(SHEETS.BADGES, badge._row, { Activa: false, EditadaEn: new Date() });
+  invalidateBadgeCaches_();
+  return { badgeId: String(badge.Id), deleted: true };
+}
+
+function adminDeleteUserApi_(request) {
+  const admin = requireAdmin_(request.token);
+  const user = findUserById_(request.userId);
+  if (!user || !truthy_(user.Activo)) throw new Error("El usuario ya no existe o fue eliminado.");
+  if (String(user.Id) === String(admin.Id) || String(user.Rol) === "ADMIN") throw new Error("No se puede eliminar una cuenta administradora.");
+  const suffix = String(user.Id).replace(/[^0-9A-Za-z]/g, "").slice(0, 8) + "-" + Date.now();
+  updateObjectRow_(SHEETS.USERS, user._row, {
+    Nombre: "Usuario eliminado", Cedula: "ELIMINADO-" + suffix, Telefono: "",
+    Correo: "eliminado-" + suffix + "@pasaporte.local", Cargo: "", UAD: "",
+    Avatar: "avatar:v2:2:0:1:0:", PasswordSalt: Utilities.getUuid(),
+    PasswordHash: Utilities.getUuid().replace(/-/g, ""), Activo: false,
+  });
+  revokeUserSessions_(user.Id);
+  invalidateUserCache_(user);
+  invalidateAdminDashboard_();
+  return { userId: String(user.Id), deleted: true };
+}
+
+function adminCreateRecoveryCodeApi_(request) {
+  requireAdmin_(request.token);
+  const user = findUserById_(request.userId);
+  if (!user || !truthy_(user.Activo) || String(user.Rol) === "ADMIN") throw new Error("El usuario no está disponible.");
+  const code = generateRecoveryCode_(8);
+  createRecovery_(user.Id, code, "ADMIN", 24 * 60);
+  return { userId: String(user.Id), code: code, expiresInHours: 24 };
+}
+
 function adminDashboardApi_(request) {
   requireAdmin_(request.token);
-  return { people: buildAdminPeople_(), missions: activeMissions_().map(adminMission_), evidence: buildAdminEvidence_() };
+  return { people: buildAdminPeople_(), missions: activeMissions_().map(adminMission_), evidence: buildAdminEvidence_(), badges: activeBadges_() };
 }
 
 function userBundle_(user) {
@@ -326,7 +489,7 @@ function userBundle_(user) {
   const bonusRows = bonusForUser_(user.Id);
   const bonusScores = {};
   bonusRows.forEach(function (row) { bonusScores[String(row.JuegoId)] = Number(row.Puntaje) || 0; });
-  return { user: publicUser_(user), missions: missions.map(publicMission_), historyMissions: historyMissions, completed: completed, started: started, history: history, bonusCompleted: Object.keys(bonusScores), bonusScores: bonusScores };
+  return { user: publicUser_(user), missions: missions.map(publicMission_), historyMissions: historyMissions, completed: completed, started: started, history: history, bonusCompleted: Object.keys(bonusScores), bonusScores: bonusScores, badgeDefinitions: activeBadges_() };
 }
 
 function buildAdminPeople_() {
@@ -356,8 +519,10 @@ function buildAdminPeople_() {
     const availableIds = available.map(function (mission) { return String(mission.Id); });
     const activeCompletedRows = completedRows.filter(function (row) { return availableIds.indexOf(String(row.MisionId)) >= 0; });
     return {
-      name: String(user.Nombre), uad: String(user.UAD), completed: activeCompletedRows.length,
-      total: available.length, points: completedRows.reduce(function (sum, p) { return sum + (pointsByMission[String(p.MisionId)] || 0); }, 0) + (bonusByUser[String(user.Id)] || 0),
+      id: String(user.Id), name: String(user.Nombre), cedula: String(user.Cedula), email: String(user.Correo || ""),
+      uad: String(user.UAD), completed: activeCompletedRows.length, total: available.length,
+      points: completedRows.reduce(function (sum, p) { return sum + (pointsByMission[String(p.MisionId)] || 0); }, 0) + (bonusByUser[String(user.Id)] || 0),
+      createdAt: user.CreadoEn ? new Date(user.CreadoEn).toISOString() : "",
     };
   });
   cachePut_(CACHE_KEYS.ADMIN_DASHBOARD, people, 30);
@@ -392,6 +557,48 @@ function validateMissionInput_(mission) {
   };
   if (!stationOptions[station]) throw new Error("La estación seleccionada no es válida.");
   return { title: title, station: station, description: description, audience: audience, duration: duration, points: Math.max(10, Math.min(1000, Number(mission.points) || 100)), icon: stationOptions[station][0], color: stationOptions[station][1], evidenceRequired: truthy_(mission.evidenceRequired) };
+}
+
+function validateBadgeInput_(input) {
+  const title = limitedText_(input.title, 80, "El nombre de la insignia es obligatorio.");
+  const description = limitedText_(input.description, 240, "La descripción es obligatoria.");
+  const icons = ["star", "shield", "trophy", "leaf", "heart", "rocket", "sparkle", "medal", "planet", "hand"];
+  const criteria = ["MISSIONS", "POINTS", "BONUS", "STATIONS", "STATION", "ALL_MISSIONS"];
+  const icon = String(input.icon || "star");
+  const criterion = String(input.criterion || "MISSIONS").toUpperCase();
+  if (icons.indexOf(icon) < 0) throw new Error("El icono seleccionado no es válido.");
+  if (criteria.indexOf(criterion) < 0) throw new Error("El criterio seleccionado no es válido.");
+  const primaryColor = validHexColor_(input.primaryColor, "#9d5cff");
+  const secondaryColor = validHexColor_(input.secondaryColor, "#12cfe0");
+  const goal = criterion === "ALL_MISSIONS" ? 1 : Math.max(1, Math.min(100000, Number(input.goal) || 1));
+  const stations = ["Estación Diversidad", "Estación Felicidad", "Estación Seguridad", "Estación Salud", "Estación Amor Propio", "Estación Ambiental"];
+  const station = criterion === "STATION" ? String(input.station || "") : "";
+  if (criterion === "STATION" && stations.indexOf(station) < 0) throw new Error("Selecciona la estación asociada a la insignia.");
+  return { title: title, description: description, icon: icon, primaryColor: primaryColor, secondaryColor: secondaryColor, criterion: criterion, goal: goal, station: station, order: Math.max(1, Math.min(999, Number(input.order) || 100)) };
+}
+
+function validHexColor_(value, fallback) {
+  const color = String(value || fallback).toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(color) ? color : fallback;
+}
+
+function activeBadges_() {
+  const cached = cacheGet_(CACHE_KEYS.BADGES);
+  if (cached) return cached;
+  if (!getSpreadsheet_().getSheetByName(SHEETS.BADGES)) return [];
+  const badges = sheetObjects_(SHEETS.BADGES).filter(function (row) { return truthy_(row.Activa); })
+    .sort(function (a, b) { return Number(a.Orden || 100) - Number(b.Orden || 100); })
+    .map(publicBadge_);
+  cachePut_(CACHE_KEYS.BADGES, badges, CACHE_TTL.MISSIONS);
+  return badges;
+}
+
+function publicBadge_(row) {
+  return { id: String(row.Id), title: String(row.Titulo), description: String(row.Descripcion), icon: String(row.Icono || "star"), primaryColor: validHexColor_(row.ColorPrimario, "#9d5cff"), secondaryColor: validHexColor_(row.ColorSecundario, "#12cfe0"), criterion: String(row.TipoCriterio || "MISSIONS"), goal: Math.max(1, Number(row.Meta) || 1), station: String(row.Estacion || ""), order: Math.max(1, Number(row.Orden) || 100) };
+}
+
+function invalidateBadgeCaches_() {
+  CacheService.getScriptCache().removeAll([CACHE_KEYS.BADGES, CACHE_KEYS.ADMIN_DASHBOARD]);
 }
 
 function generateUniqueMissionCode_() {
@@ -502,9 +709,56 @@ function cleanupSessions_() {
   rows.forEach(function (row) { sheet.deleteRow(row._row); });
 }
 
+function revokeUserSessions_(userId) {
+  const sheet = getSheet_(SHEETS.SESSIONS);
+  const rows = findObjectsByField_(SHEETS.SESSIONS, "UsuarioId", userId, String).sort(function (a, b) { return b._row - a._row; });
+  rows.forEach(function (row) {
+    CacheService.getScriptCache().remove(sessionCacheKey_(row.Token));
+    sheet.deleteRow(row._row);
+  });
+  CacheService.getScriptCache().remove(activeSessionCacheKey_(userId));
+}
+
+function createRecovery_(userId, code, channel, durationMinutes) {
+  const id = Utilities.getUuid();
+  const row = {
+    Id: id, UsuarioId: userId, CodigoHash: hashPassword_(normalizeRecoveryCode_(code), id),
+    ExpiraEn: new Date(Date.now() + durationMinutes * 60 * 1000), Intentos: 0,
+    Usado: false, Canal: channel, CreadoEn: new Date(),
+  };
+  row._row = appendObject_(SHEETS.RECOVERY, row);
+  return row;
+}
+
+function generateRecoveryCode_(length) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let index = 0; index < length; index += 1) code += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+  return code;
+}
+
+function normalizeRecoveryCode_(value) { return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12); }
+
+function enforceRecoveryRequestRate_(cedula) {
+  const key = "pasaporte:recovery-request:" + cedula;
+  const cache = CacheService.getScriptCache();
+  const attempts = Number(cache.get(key)) || 0;
+  if (attempts >= 3) throw new Error("Ya se solicitaron varios códigos. Espera 15 minutos o pide un código de respaldo al administrador.");
+  cache.put(key, String(attempts + 1), 900);
+}
+
 function mantenimientoPasaporteSeguro() {
   cleanupSessions_();
-  return "Sesiones vencidas eliminadas.";
+  cleanupRecoveries_();
+  return "Sesiones y recuperaciones vencidas eliminadas.";
+}
+
+function cleanupRecoveries_() {
+  const sheet = getSheet_(SHEETS.RECOVERY);
+  const threshold = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  sheetObjects_(SHEETS.RECOVERY).filter(function (row) { return truthy_(row.Usado) || new Date(row.ExpiraEn).getTime() < threshold; })
+    .sort(function (a, b) { return b._row - a._row; })
+    .forEach(function (row) { sheet.deleteRow(row._row); });
 }
 
 function sessionCacheKey_(token) {
@@ -582,6 +836,11 @@ function cacheUser_(user) {
   if (!user) return;
   cachePut_(userCedulaCacheKey_(user.Cedula), user, CACHE_TTL.USER);
   cachePut_(userIdCacheKey_(user.Id), user, CACHE_TTL.USER);
+}
+
+function invalidateUserCache_(user) {
+  if (!user) return;
+  CacheService.getScriptCache().removeAll([userCedulaCacheKey_(user.Cedula), userIdCacheKey_(user.Id), activeSessionCacheKey_(user.Id), progressCacheKey_(user.Id), bonusCacheKey_(user.Id)]);
 }
 
 function hashPassword_(password, salt) {
@@ -758,6 +1017,23 @@ function seedMissionCodes_() {
     if (!normalizeMissionCode_(mission.CodigoSello)) updateObjectRow_(SHEETS.MISSIONS, mission._row, { CodigoSello: generateUniqueMissionCode_(), EvidenciaObligatoria: truthy_(mission.EvidenciaObligatoria) });
   });
   invalidateMissionCaches_();
+}
+
+function seedBadges_() {
+  if (sheetObjects_(SHEETS.BADGES).length) return;
+  const now = new Date();
+  const seeds = [
+    ["first-stamp", "Primer sello", "Completaste tu primera misión.", "star", "#9d5cff", "#d7c7ff", "MISSIONS", 1, "", 10],
+    ["route-keeper", "Guardián de la ruta", "Visitaste tres estaciones diferentes.", "shield", "#12cfe0", "#a5f4f7", "STATIONS", 3, "", 20],
+    ["bonus-explorer", "Explorador bonus", "Superaste tu primer minijuego.", "rocket", "#ffb703", "#ffe39b", "BONUS", 1, "", 30],
+    ["bright-mind", "Mente brillante", "Completaste los tres retos bonus.", "sparkle", "#ff5c9b", "#ffc2d9", "BONUS", 3, "", 40],
+    ["point-collector", "Coleccionista", "Alcanzaste 500 puntos en tu recorrido.", "medal", "#43d17d", "#baf3cf", "POINTS", 500, "", 50],
+    ["festival-ambassador", "Embajador del Festival", "Sellaste todas las misiones de tu pasaporte.", "trophy", "#7253dc", "#cfc2ff", "ALL_MISSIONS", 1, "", 60],
+  ];
+  seeds.forEach(function (badge) {
+    appendObject_(SHEETS.BADGES, { Id: badge[0], Titulo: badge[1], Descripcion: badge[2], Icono: badge[3], ColorPrimario: badge[4], ColorSecundario: badge[5], TipoCriterio: badge[6], Meta: badge[7], Estacion: badge[8], Activa: true, Orden: badge[9], CreadaEn: now, CreadaPor: "SISTEMA", EditadaEn: "" });
+  });
+  invalidateBadgeCaches_();
 }
 
 function cacheGet_(key) {
