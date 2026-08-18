@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 export type FestivalMission = {
   id: number;
@@ -46,7 +46,7 @@ export function FestivalRoute({ missions, completed, started, avatar, travelerNa
   started: number[];
   avatar: string;
   travelerName: string;
-  onExplore: () => void;
+  onExplore: (station?: string) => void;
 }) {
   const stops = useMemo(() => {
     const grouped = new Map<string, FestivalMission[]>();
@@ -60,40 +60,75 @@ export function FestivalRoute({ missions, completed, started, avatar, travelerNa
       total: items.length,
     }));
   }, [completed, missions, started]);
-  const positions = [[9, 73], [24, 31], [41, 61], [58, 24], [75, 58], [91, 29]];
-  const mobilePositions = [[18, 17], [70, 28], [29, 42], [74, 57], [25, 71], [70, 84]];
+  const positions = [[12, 67], [27, 27], [43, 62], [59, 22], [76, 59], [90, 27]];
+  const mobilePositions = [[21, 18], [73, 29], [25, 43], [72, 56], [25, 70], [72, 83]];
   const finishedStops = stops.filter((stop) => stop.complete).length;
-  const travelerIndex = Math.min(stops.findIndex((stop) => !stop.complete), Math.max(stops.length - 1, 0));
-  const safeTravelerIndex = travelerIndex < 0 ? Math.max(stops.length - 1, 0) : travelerIndex;
-  const travelerPosition = positions[safeTravelerIndex] || [50, 50];
-  const routeProgress = stops.length > 1 ? Math.round((finishedStops / stops.length) * 100) : finishedStops ? 100 : 0;
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [travelling, setTravelling] = useState(false);
+  const [shipPosition, setShipPosition] = useState({ x: 50, y: 84, mx: 50, my: 92 });
+  const travelTimer = useRef<number | null>(null);
   const avatarColors = parseAvatarColors(avatar);
 
-  return <section className="living-route" aria-label="Ruta viva del Festival">
+  useEffect(() => () => {
+    if (travelTimer.current) window.clearTimeout(travelTimer.current);
+  }, []);
+
+  function travelTo(index: number) {
+    if (travelling) return;
+    const stop = stops[index];
+    const desktop = positions[index] || [50, 50];
+    const mobile = mobilePositions[index] || [50, 50];
+    setSelectedIndex(index);
+    setTravelling(true);
+    window.requestAnimationFrame(() => setShipPosition({ x: desktop[0], y: desktop[1] - 9, mx: mobile[0], my: mobile[1] - 6 }));
+    const travelDuration = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 220 : 1850;
+    travelTimer.current = window.setTimeout(() => onExplore(stop.station), travelDuration);
+  }
+
+  return <section className="living-route living-route-3d" aria-label="Ruta viva 3D del Festival">
     <div className="living-route-heading">
-      <div><p className="step-label">RUTA VIVA DEL FESTIVAL</p><h3>Tu viaje por los seis mundos</h3><p>Cada estación despierta cuando completas sus retos.</p></div>
-      <button onClick={onExplore}>Explorar misiones <span>→</span></button>
+      <div><p className="step-label">RUTA VIVA · MUNDO 3D</p><h3>Viaja a tu próxima estación</h3><p>Selecciona un mundo. Tu nave te llevará hasta sus misiones.</p></div>
+      <button onClick={() => onExplore()}>Ver todas las misiones <span>→</span></button>
     </div>
-    <div className="festival-map">
-      <div className="map-sky" aria-hidden="true"><i /><i /><i /><i /><i /></div>
-      <svg className="route-curve" viewBox="0 0 1000 360" preserveAspectRatio="none" aria-hidden="true">
-        <path className="route-shadow" d="M90 263 C165 130 205 92 240 112 S345 250 410 219 S500 60 580 86 S690 255 750 209 S835 84 910 104" pathLength="100" />
-        <path className="route-progress-path" d="M90 263 C165 130 205 92 240 112 S345 250 410 219 S500 60 580 86 S690 255 750 209 S835 84 910 104" pathLength="100" style={{ strokeDasharray: `${routeProgress} 100` }} />
-      </svg>
+    <div className={`festival-map festival-map-3d ${travelling ? "is-travelling" : ""}`}>
+      <div className="space-nebula" aria-hidden="true"><i /><i /><i /></div>
+      <div className="map-sky" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /></div>
+      <div className="world-horizon" aria-hidden="true"><i /><i /><i /></div>
       {stops.slice(0, 6).map((stop, index) => {
         const position = positions[index];
         const shortName = stop.station.replace("Estación ", "");
-        return <div className={`world-stop ${stop.complete ? "is-complete" : ""} ${stop.current ? "is-current" : ""}`} style={{ "--world": stop.color, "--mobile-left": `${mobilePositions[index][0]}%`, "--mobile-top": `${mobilePositions[index][1]}%`, left: `${position[0]}%`, top: `${position[1]}%` } as React.CSSProperties} key={stop.station}>
-          <span className="world-orbit"><i>{stop.complete ? "✓" : index + 1}</i></span>
-          <b>{shortName}</b><small>{stop.completedCount}/{stop.total}</small>
-        </div>;
+        return <button
+          type="button"
+          className={`world-stop world-island world-kind-${index} ${stop.complete ? "is-complete" : ""} ${stop.current ? "is-current" : ""} ${selectedIndex === index ? "is-selected" : ""}`}
+          style={{ "--world": stop.color, "--mobile-left": `${mobilePositions[index][0]}%`, "--mobile-top": `${mobilePositions[index][1]}%`, left: `${position[0]}%`, top: `${position[1]}%` } as React.CSSProperties}
+          key={stop.station}
+          onClick={() => travelTo(index)}
+          disabled={travelling}
+          aria-label={`Viajar a ${stop.station}. ${stop.completedCount} de ${stop.total} misiones completadas`}
+        >
+          <span className="island-scene" aria-hidden="true">
+            <i className="island-shadow" />
+            <i className="island-rock" />
+            <i className="island-top" />
+            <i className="world-landmark"><b>{worldGlyph(index)}</b></i>
+            <i className="world-prop prop-one" /><i className="world-prop prop-two" />
+            {stop.complete && <i className="world-check">✓</i>}
+          </span>
+          <span className="world-copy"><b>{shortName}</b><small>{stop.completedCount}/{stop.total} misiones</small><i>{selectedIndex === index ? "Preparando viaje…" : "Viajar aquí"}</i></span>
+        </button>;
       })}
-      {!!stops.length && <div className="route-traveler" style={{ left: `${travelerPosition[0]}%`, top: `${travelerPosition[1]}%`, "--skin": avatarColors.skin, "--hair": avatarColors.hair, "--shirt": avatarColors.shirt } as React.CSSProperties} title={`${travelerName} está aquí`}>
-        <span><i className="traveler-hair" /><i className="traveler-face" /><i className="traveler-shirt" /></span><b>Estás aquí</b>
+      {!!stops.length && <div className={`festival-spacecraft ${travelling ? "launching" : "docked"}`} style={{ "--ship-x": `${shipPosition.x}%`, "--ship-y": `${shipPosition.y}%`, "--ship-mx": `${shipPosition.mx}%`, "--ship-my": `${shipPosition.my}%`, "--skin": avatarColors.skin, "--hair": avatarColors.hair, "--shirt": avatarColors.shirt } as React.CSSProperties} title={`${travelerName} viaja en la nave`}>
+        <i className="ship-energy" /><span className="ship-wing wing-left" /><span className="ship-wing wing-right" />
+        <span className="ship-body"><i className="ship-window"><b className="pilot-hair" /><b className="pilot-face" /></i><i className="ship-light" /></span>
+        <strong>{travelling ? "Viajando…" : "Tu nave"}</strong>
       </div>}
-      <div className="map-legend"><span><i className="legend-complete" /> Completada</span><span><i className="legend-current" /> En curso</span><span><i /> Por descubrir</span></div>
+      <div className="mission-control" aria-live="polite"><span>✦</span><div><b>{travelling && selectedIndex !== null ? `Destino: ${stops[selectedIndex].station}` : "Centro de navegación"}</b><small>{travelling ? "Llegando a la estación…" : `${finishedStops}/${stops.length} mundos completados · Toca una estación para despegar`}</small></div></div>
     </div>
   </section>;
+}
+
+function worldGlyph(index: number) {
+  return ["✦", "☀", "◆", "+", "♥", "♧"][index] || "✦";
 }
 
 export function BadgeCollection({ badges, onExplore }: { badges: FestivalBadge[]; onExplore: () => void }) {
