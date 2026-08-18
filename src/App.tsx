@@ -1,9 +1,12 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import MiniGamesPage, { BonusGameId } from "./MiniGames";
+import { FormEvent, lazy, Suspense, useEffect, useMemo, useState } from "react";
+import type { BonusGameId } from "./MiniGames";
+import { BadgeCollection, buildBadges, FestivalRoute, FinalPassportCard } from "./FestivalExperience";
 
-type View = "dashboard" | "guide" | "missions" | "bonus" | "history" | "complete" | "admin";
+const MiniGamesPage = lazy(() => import("./MiniGames"));
+
+type View = "dashboard" | "guide" | "missions" | "bonus" | "badges" | "history" | "complete" | "admin";
 type Role = "USER" | "ADMIN";
 type User = { name: string; cedula: string; phone: string; email: string; cargo: string; uad: string; avatar: string; role: Role };
 type Mission = { id: number; station: string; icon: string; color: string; title: string; description: string; points: number; audience: string; duration: string };
@@ -64,7 +67,7 @@ const demoPeople = [
 ];
 
 declare global {
-  interface Window { PASSPORT_CONFIG?: { apiUrl?: string } }
+  interface Window { PASSPORT_CONFIG?: { apiUrl?: string; features?: Record<string, boolean> } }
 }
 
 function getApiUrl() {
@@ -72,26 +75,43 @@ function getApiUrl() {
   return window.PASSPORT_CONFIG?.apiUrl?.trim() || "";
 }
 
+function featureEnabled(name: string) {
+  return window.PASSPORT_CONFIG?.features?.[name] !== false;
+}
+
 async function callApi(action: string, payload: Record<string, unknown> = {}) {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 20000);
-  try {
-    const response = await fetch(getApiUrl(), {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ action, ...payload }),
-      signal: controller.signal,
-    });
-    if (!response.ok) throw new Error("El servicio no respondió correctamente.");
-    const result = await response.json();
-    if (!result.ok) throw new Error(result.message || "No fue posible completar la solicitud.");
-    return result.data;
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw new Error("La conexión tardó demasiado. Intenta nuevamente.");
-    throw error;
-  } finally {
-    window.clearTimeout(timeout);
+  const requestId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 18000);
+    try {
+      const response = await fetch(getApiUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ action, requestId, ...payload }),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const error = new Error("El servicio está recibiendo muchas solicitudes.") as Error & { retryable?: boolean };
+        error.retryable = response.status === 429 || response.status >= 500;
+        throw error;
+      }
+      const result = await response.json();
+      if (!result.ok) throw new Error(result.message || "No fue posible completar la solicitud.");
+      return result.data;
+    } catch (error) {
+      lastError = error;
+      const aborted = error instanceof DOMException && error.name === "AbortError";
+      const retryable = aborted || (error as Error & { retryable?: boolean })?.retryable || error instanceof TypeError || error instanceof SyntaxError;
+      if (!retryable || attempt === 2) break;
+      await new Promise((resolve) => window.setTimeout(resolve, 700 * (2 ** attempt) + Math.random() * 250));
+    } finally {
+      window.clearTimeout(timeout);
+    }
   }
+  if (lastError instanceof DOMException && lastError.name === "AbortError") throw new Error("La conexión tardó demasiado. Tu información no se perdió; intenta nuevamente.");
+  throw lastError instanceof Error ? lastError : new Error("No fue posible conectar con el pasaporte.");
 }
 
 function decodeAvatar(value: string): AvatarConfig {
@@ -108,6 +128,24 @@ function decodeAvatar(value: string): AvatarConfig {
 
 function encodeAvatar(config: AvatarConfig) {
   return `avatar:v1:${config.skin}:${config.hair}:${config.style}:${config.shirt}:${config.accessory}`;
+}
+
+function tiltCover(event: React.PointerEvent<HTMLDivElement>) {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const bounds = event.currentTarget.getBoundingClientRect();
+  const x = (event.clientX - bounds.left) / bounds.width - .5;
+  const y = (event.clientY - bounds.top) / bounds.height - .5;
+  event.currentTarget.style.setProperty("--cover-rx", `${(-y * 7).toFixed(2)}deg`);
+  event.currentTarget.style.setProperty("--cover-ry", `${(x * 9).toFixed(2)}deg`);
+  event.currentTarget.style.setProperty("--shine-x", `${((x + .5) * 100).toFixed(0)}%`);
+  event.currentTarget.style.setProperty("--shine-y", `${((y + .5) * 100).toFixed(0)}%`);
+}
+
+function resetCoverTilt(event: React.PointerEvent<HTMLDivElement>) {
+  event.currentTarget.style.setProperty("--cover-rx", "0deg");
+  event.currentTarget.style.setProperty("--cover-ry", "0deg");
+  event.currentTarget.style.setProperty("--shine-x", "50%");
+  event.currentTarget.style.setProperty("--shine-y", "35%");
 }
 
 export default function Home() {
@@ -141,7 +179,9 @@ export default function Home() {
   const completedHistory = historyMissions.filter((m) => completed.includes(m.id));
   const progress = visibleMissions.length ? Math.round((completedVisible.length / visibleMissions.length) * 100) : 0;
   const points = completedVisible.reduce((sum, m) => sum + m.points, 0) + Object.values(bonusScores).reduce((sum, value) => sum + value, 0);
-  const viewOrder: View[] = ["dashboard", "guide", "missions", "bonus", "history", "complete", "admin"];
+  const badges = useMemo(() => buildBadges({ missions: visibleMissions, completed, points, bonusCompleted }), [bonusCompleted, completed, points, visibleMissions]);
+  const unlockedBadges = badges.filter((badge) => badge.unlocked).length;
+  const viewOrder: View[] = ["dashboard", "guide", "missions", "bonus", "badges", "history", "complete", "admin"];
 
   useEffect(() => {
     if (!getApiUrl()) return;
@@ -283,6 +323,18 @@ export default function Home() {
       return false;
     } finally { setBusyAction(""); }
   }
+  async function refreshAdminDashboard() {
+    if (busyAction) return;
+    setBusyAction("admin-refresh");
+    try {
+      if (getApiUrl()) {
+        const data = await callApi("adminDashboard", { token: sessionToken });
+        setAdminPeople(data.people || []);
+      }
+      notify("Tablero administrativo actualizado.");
+    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible actualizar el tablero."); }
+    finally { setBusyAction(""); }
+  }
   async function saveAvatar() {
     if (!user || busyAction) return;
     const avatar = encodeAvatar(avatarDraft);
@@ -320,25 +372,26 @@ export default function Home() {
   return <main className="app-shell">
     <div className="aurora aurora-one" /><div className="aurora aurora-two" />
     {!opened && <section className="cover-stage" aria-label="Portada del Pasaporte Seguro">
-      <div className="book-cover clean-cover"><span className="cover-spine" /><span className="cover-foil" /><div className="cover-brands"><img className="cover-company-logo" src="./assets/jer-logo.webp" alt="JER Une tus sueños" /><span>Una experiencia apoyada por</span><img className="cover-program-logo" src="./assets/de-mi-para-mi.webp" alt="Programa De mí para mí" /></div><p className="eyebrow">SEMANA DE LA SEGURIDAD Y SALUD EN EL TRABAJO</p>
+      <div className="cover-perspective" onPointerMove={featureEnabled("dynamicCover") ? tiltCover : undefined} onPointerLeave={featureEnabled("dynamicCover") ? resetCoverTilt : undefined}>
+      <div className={`book-cover clean-cover ${featureEnabled("dynamicCover") ? "dynamic-cover" : ""}`}><span className="cover-spine" /><span className="cover-foil" />{featureEnabled("dynamicCover") && <><span className="cover-light" aria-hidden="true" /><div className="cover-constellation" aria-hidden="true"><i /><i /><i /><i /><i /><i /></div><div className="cover-flight" aria-hidden="true"><span>✈</span></div></>}<div className="cover-brands"><img className="cover-company-logo" src="./assets/jer-logo.webp" alt="JER Une tus sueños" /><span>Una experiencia apoyada por</span><img className="cover-program-logo" src="./assets/de-mi-para-mi.webp" alt="Programa De mí para mí" /></div><p className="eyebrow">SEMANA DE LA SEGURIDAD Y SALUD EN EL TRABAJO</p>
         <h1>PASAPORTE<span>DE LA <i className="purple">DIVERSIDAD</i>,</span><span>LA <i className="yellow">FELICIDAD</i>,</span><span>LA <i className="cyan">SEGURIDAD</i></span><span>LA <i className="green">SALUD</i> Y</span><span>EL <i className="pink">CUIDADO</i></span><span className="small-title">EN EL TRABAJO</span></h1>
-        <div className="cover-color-line" aria-hidden="true">{stations.map((station) => <i key={station.name} style={{ background: station.color }} />)}</div><p className="festival">FESTIVAL 2026</p><p className="motto">DIFERENTES EN DISTANCIA · ÚNICOS EN HISTORIA · JUNTOS EN PROPÓSITO</p><button className="primary-button cover-button" onClick={() => setOpened(true)}>{user ? "Volver a mi pasaporte" : "Abrir mi pasaporte"} <UiIcon name="arrow" /></button>
-      </div><p className="hint">Toca la portada para comenzar tu recorrido</p>
+        <div className="cover-color-line" aria-hidden="true">{stations.map((station, index) => <i key={station.name} style={{ background: station.color, "--delay": `${index * .16}s` } as React.CSSProperties} />)}</div><p className="festival">FESTIVAL 2026</p><p className="motto">DIFERENTES EN DISTANCIA · ÚNICOS EN HISTORIA · JUNTOS EN PROPÓSITO</p><button className="primary-button cover-button" onClick={() => setOpened(true)}>{user ? "Volver a mi pasaporte" : "Abrir mi pasaporte"} <UiIcon name="arrow" /></button>
+      </div></div><p className="hint"><span>↔</span> Mueve el cursor y abre tu próxima aventura</p>
     </section>}
 
     {opened && !user && <section className="auth-stage"><div className="auth-book"><aside className="auth-visual"><p className="mini-kicker">FESTIVAL 2026</p><div className="passport-mark">P</div><h2>Tu ruta segura comienza aquí.</h2><p>Regístrate, visita las estaciones y colecciona cada sello del festival.</p><div className="mini-route">{stations.map((s) => <span key={s.name} style={{ background: s.color }}><StationIcon station={s.name} /></span>)}</div></aside>
       <div className="auth-form-side"><div className="auth-switch" role="tablist"><button className={authMode === "login" ? "active" : ""} onClick={() => setAuthMode("login")}>Iniciar sesión</button><button className={authMode === "register" ? "active" : ""} onClick={() => setAuthMode("register")}>Crear pasaporte</button></div>
-        {authMode === "login" ? <form className="passport-form" onSubmit={login}><p className="step-label">BIENVENIDO DE NUEVO</p><h2>Continúa tu recorrido</h2><label>Número de cédula<input name="cedula" inputMode="numeric" placeholder="Ej. 1010101010" required /></label><label>Contraseña<input name="password" type="password" placeholder="Tu contraseña" required /></label><button className="primary-button" type="submit" disabled={busyAction === "login"}>{busyAction === "login" ? <><LoadingDot /> Verificando...</> : <>Ingresar al pasaporte <UiIcon name="arrow" /></>}</button>{!getApiUrl() && <p className="demo-note">Demostración administrador: <b>1000000000</b> / <b>Demo1234*</b></p>}</form>
-        : <form className="passport-form register-grid" onSubmit={register}><div className="form-heading"><p className="step-label">NUEVO VIAJERO</p><h2>Crea tu pasaporte</h2></div><label className="wide">Nombre completo<input name="name" placeholder="Nombres y apellidos" required /></label><label>Número de cédula<input name="cedula" inputMode="numeric" placeholder="Sin puntos" required /></label><label>Número de teléfono<input name="phone" type="tel" placeholder="300 000 0000" required /></label><label className="wide">Correo electrónico<input name="email" type="email" placeholder="nombre@empresa.com" required /></label><label>Cargo<select name="cargo">{catalogs.cargos.map((x) => <option key={x}>{x}</option>)}</select></label><label>UAD<select name="uad">{catalogs.uads.map((x) => <option key={x}>{x}</option>)}</select></label><label className="wide">Contraseña<input name="password" type="password" minLength={8} placeholder="Mínimo 8 caracteres" required /></label><button className="primary-button wide" type="submit" disabled={busyAction === "register"}>{busyAction === "register" ? <><LoadingDot /> Creando...</> : <>Crear mi pasaporte <UiIcon name="arrow" /></>}</button></form>}
+        {authMode === "login" ? <form className="passport-form" onSubmit={login}><p className="step-label">BIENVENIDO DE NUEVO</p><h2>Continúa tu recorrido</h2><label>Número de cédula<input name="cedula" inputMode="numeric" maxLength={25} autoComplete="username" placeholder="Ej. 1010101010" required /></label><label>Contraseña<input name="password" type="password" maxLength={128} autoComplete="current-password" placeholder="Tu contraseña" required /></label><button className="primary-button" type="submit" disabled={busyAction === "login"}>{busyAction === "login" ? <><LoadingDot /> Verificando...</> : <>Ingresar al pasaporte <UiIcon name="arrow" /></>}</button>{!getApiUrl() && <p className="demo-note">Demostración administrador: <b>1000000000</b> / <b>Demo1234*</b></p>}</form>
+        : <form className="passport-form register-grid" onSubmit={register}><div className="form-heading"><p className="step-label">NUEVO VIAJERO</p><h2>Crea tu pasaporte</h2></div><label className="wide">Nombre completo<input name="name" maxLength={120} autoComplete="name" placeholder="Nombres y apellidos" required /></label><label>Número de cédula<input name="cedula" inputMode="numeric" maxLength={25} autoComplete="username" placeholder="Sin puntos" required /></label><label>Número de teléfono<input name="phone" type="tel" maxLength={30} autoComplete="tel" placeholder="300 000 0000" required /></label><label className="wide">Correo electrónico<input name="email" type="email" maxLength={160} autoComplete="email" placeholder="nombre@empresa.com" required /></label><label>Cargo<select name="cargo">{catalogs.cargos.map((x) => <option key={x}>{x}</option>)}</select></label><label>UAD<select name="uad">{catalogs.uads.map((x) => <option key={x}>{x}</option>)}</select></label><label className="wide">Contraseña<input name="password" type="password" minLength={8} maxLength={128} autoComplete="new-password" placeholder="Mínimo 8 caracteres" required /></label><button className="primary-button wide" type="submit" disabled={busyAction === "register"}>{busyAction === "register" ? <><LoadingDot /> Creando...</> : <>Crear mi pasaporte <UiIcon name="arrow" /></>}</button></form>}
       </div></div></section>}
 
-    {opened && user && <section className={`passport-stage ${sessionOpening ? "session-opening" : ""} ${sessionClosing ? "session-closing" : ""}`}><nav className="page-tabs" aria-label="Secciones del pasaporte"><Tab label="Tablero" icon="home" active={view === "dashboard"} onClick={() => turnTo("dashboard")} /><Tab label="Cómo usarlo" icon="help" active={view === "guide"} onClick={() => turnTo("guide")} /><Tab label="Misiones" icon="compass" active={view === "missions"} onClick={() => turnTo("missions")} /><Tab label="Bonus" icon="gamepad" active={view === "bonus"} onClick={() => turnTo("bonus")} /><Tab label="Historial" icon="history" active={view === "history"} onClick={() => turnTo("history")} />{user.role === "ADMIN" && <Tab label="Administrar" icon="settings" active={view === "admin"} onClick={() => turnTo("admin")} />}</nav>
+    {opened && user && <section className={`passport-stage ${sessionOpening ? "session-opening" : ""} ${sessionClosing ? "session-closing" : ""}`}><nav className="page-tabs" aria-label="Secciones del pasaporte"><Tab label="Tablero" icon="home" active={view === "dashboard"} onClick={() => turnTo("dashboard")} /><Tab label="Cómo usarlo" icon="help" active={view === "guide"} onClick={() => turnTo("guide")} /><Tab label="Misiones" icon="compass" active={view === "missions"} onClick={() => turnTo("missions")} /><Tab label="Bonus" icon="gamepad" active={view === "bonus"} onClick={() => turnTo("bonus")} />{featureEnabled("badges") && <Tab label="Insignias" icon="badge" active={view === "badges"} onClick={() => turnTo("badges")} />}<Tab label="Historial" icon="history" active={view === "history"} onClick={() => turnTo("history")} />{user.role === "ADMIN" && <Tab label="Administrar" icon="settings" active={view === "admin"} onClick={() => turnTo("admin")} />}</nav>
       <div className="passport-book"><span className="book-binding" aria-hidden="true" /><header className="passport-header"><div className="brand-lockup"><div className="brand-p">P</div><div><b>PASAPORTE SEGURO</b><small>FESTIVAL 2026</small></div></div><img className="header-program-logo" src="./assets/de-mi-para-mi.webp" alt="De mí para mí" /><div className="header-actions"><button className="cover-return" onClick={() => setOpened(false)} aria-label="Regresar a la portada"><UiIcon name="cover" /><span>Portada</span></button><div className="profile-chip"><AvatarPortrait value={user.avatar} size="tiny" /><div><b>{user.name}</b><small>{user.uad}</small></div><button onClick={logout} aria-label="Cerrar sesión" title="Cerrar sesión"><UiIcon name="logout" /></button></div></div></header>
         <div className={`page-sheet turn-${pageDirection}`} key={`${view}-${pageKey}`}>
         {view === "dashboard" && <div className="page-content dashboard-page"><div className="welcome-copy"><p className="step-label">TABLERO DE VIAJE</p><h2>¡Hola, {user.name.split(" ")[0]}! <span>👋</span></h2><p>Tu pasaporte ya está en marcha. Cada estación suma una experiencia, un sello y nuevos puntos.</p></div><button className="avatar-card" onClick={openAvatarStudio}><span className="avatar-large"><AvatarPortrait value={user.avatar} size="small" /></span><span><b>Tu foto de pasaporte</b><small>Personalizar avatar</small></span><i>✎</i></button>
           <div className="progress-card"><div className="progress-ring" style={{ "--progress": `${progress * 3.6}deg` } as React.CSSProperties}><span><b>{progress}%</b><small>completado</small></span></div><div><p className="step-label">AVANCE TOTAL</p><h3>{completedVisible.length} de {visibleMissions.length} misiones selladas</h3><p>{progress < 100 ? `Te faltan ${visibleMissions.length - completedVisible.length} sellos para completar el pasaporte.` : "¡Tu pasaporte está completo!"}</p></div><button className="secondary-button" onClick={() => turnTo(progress === 100 ? "complete" : "missions")}>{progress === 100 ? "Ver logro" : "Continuar misiones"}</button></div>
-          <div className="stat-grid"><StatCard icon="sparkle" label="Puntos acumulados" value={String(points)} color="#9d5cff" /><StatCard icon="play" label="Misiones en curso" value={String(started.length)} color="#ffb703" /><StatCard icon="check" label="Sellos obtenidos" value={String(completedVisible.length)} color="#12cfe0" /></div>
-          <div className="route-card"><div className="section-heading"><div><p className="step-label">TU RUTA</p><h3>Estaciones del festival</h3></div><button onClick={() => turnTo("missions")}>Ver todas <UiIcon name="arrow" /></button></div><div className="route-line">{visibleMissions.map((m, i) => <div className={`route-stop ${completed.includes(m.id) ? "done" : started.includes(m.id) ? "current" : ""}`} key={m.id}><span style={{ "--station": m.color } as React.CSSProperties}>{completed.includes(m.id) ? <UiIcon name="check" /> : <StationIcon station={m.station} />}</span><small>{i + 1}</small><b>{m.station.replace("Estación ", "")}</b></div>)}</div></div>
+          <div className={`stat-grid ${featureEnabled("badges") ? "stat-grid-four" : ""}`}><StatCard icon="sparkle" label="Puntos acumulados" value={String(points)} color="#9d5cff" /><StatCard icon="play" label="Misiones en curso" value={String(started.length)} color="#ffb703" /><StatCard icon="check" label="Sellos obtenidos" value={String(completedVisible.length)} color="#12cfe0" />{featureEnabled("badges") && <button className="stat-card stat-card-button" onClick={() => turnTo("badges")}><span style={{ background: "#ff5c9b" }}><UiIcon name="badge" /></span><div><b>{unlockedBadges}</b><small>Insignias logradas</small></div></button>}</div>
+          {featureEnabled("livingRoute") && <FestivalRoute missions={visibleMissions} completed={completed} started={started} avatar={user.avatar} travelerName={user.name} onExplore={() => turnTo("missions")} />}
         </div>}
 
         {view === "guide" && <div className="page-content guide-page"><div className="center-heading"><p className="step-label">GUÍA DE VIAJE</p><h2>¿Cómo usar tu pasaporte?</h2><p>Cuatro pasos sencillos para vivir la experiencia completa.</p></div><div className="guide-steps"><GuideStep number="01" icon="compass" title="Explora las misiones" text="Abre el selector y descubre las actividades disponibles para tu UAD." color="#9d5cff" /><GuideStep number="02" icon="pin" title="Visita la estación" text="Acércate a la estación indicada y pulsa Iniciar misión cuando estés listo." color="#12cfe0" /><GuideStep number="03" icon="check" title="Completa el reto" text="Realiza la actividad con el facilitador y registra tu misión como completada." color="#ffb703" /><GuideStep number="04" icon="sparkle" title="Colecciona sellos" text="Suma puntos, revisa tu historial y completa todas las páginas del pasaporte." color="#ff5c9b" /></div><div className="tip-card"><span><UiIcon name="sparkle" /></span><div><b>Consejo de viajero</b><p>Las misiones disponibles dependen de tu UAD. Vuelve a revisar durante el festival: pueden aparecer retos nuevos.</p></div></div><button className="primary-button centered" onClick={() => turnTo("missions")}>Ver misiones disponibles <UiIcon name="arrow" /></button></div>}
@@ -347,12 +400,14 @@ export default function Home() {
           <div className="mission-grid">{filteredMissions.map((m) => { const done = completed.includes(m.id), active = started.includes(m.id), isStarting = busyAction === `start-${m.id}`, isFinishing = busyAction === `finish-${m.id}`; return <article className={`mission-card ${done ? "completed" : ""}`} key={m.id} style={{ "--station": m.color } as React.CSSProperties}><div className="mission-top"><span className="station-icon"><StationIcon station={m.station} /></span><span className="mission-status">{done ? "✓ SELLADA" : active ? "● EN CURSO" : "DISPONIBLE"}</span></div><p className="station-name">{m.station}</p><h3>{m.title}</h3><p>{m.description}</p><div className="mission-meta"><span><UiIcon name="clock" /> {m.duration}</span><span><UiIcon name="sparkle" /> {m.points} pts</span><span><UiIcon name="pin" /> {m.audience}</span></div>{done ? <button className="mission-button done-button" disabled>Pasaporte sellado <UiIcon name="check" /></button> : active ? <button className="mission-button" disabled={isFinishing} onClick={() => finishMission(m)}>{isFinishing ? <><LoadingDot /> Sellando...</> : <>Completar y sellar <UiIcon name="check" /></>}</button> : <button className="mission-button outline" disabled={isStarting} onClick={() => startMission(m.id)}>{isStarting ? <><LoadingDot /> Iniciando...</> : <>Iniciar misión <UiIcon name="play" /></>}</button>}</article> })}</div>
         </div>}
 
-        {view === "bonus" && <MiniGamesPage completed={bonusCompleted} scores={bonusScores} busy={busyAction} onComplete={completeBonus} />}
+        {view === "bonus" && <Suspense fallback={<div className="page-content lazy-page-loader"><LoadingDot /><b>Preparando la zona bonus...</b></div>}><MiniGamesPage completed={bonusCompleted} scores={bonusScores} busy={busyAction} onComplete={completeBonus} /></Suspense>}
+
+        {view === "badges" && featureEnabled("badges") && <BadgeCollection badges={badges} onExplore={() => turnTo("missions")} />}
 
         {view === "history" && <div className="page-content history-page"><div className="section-heading"><div><p className="step-label">BITÁCORA PERSONAL</p><h2>Historial de misiones</h2><p>Todos los sellos y experiencias que has coleccionado.</p></div><div className="passport-number">PASAPORTE Nº <b>{user.cedula.slice(-6).padStart(6, "0")}</b></div></div><div className="history-list">{completedHistory.length ? completedHistory.map((m, i) => <article className="history-item" key={m.id}><span className="history-icon" style={{ background: m.color }}><StationIcon station={m.station} /></span><div><small>{m.station}</small><h3>{m.title}</h3><p>Completada el {historyDates[m.id] ? new Date(historyDates[m.id]).toLocaleDateString("es-CO", { day: "numeric", month: "long", year: "numeric" }) : `${i === 0 ? "10" : "11"} de agosto de 2026`} · {m.duration}</p></div><div className="history-points">+{m.points}<small>puntos</small></div><span className="mini-stamp">SELLADA</span></article>) : <div className="empty-state"><span><UiIcon name="compass" /></span><h3>Tu bitácora está lista</h3><p>Completa tu primera misión para estrenar esta página.</p><button className="primary-button" onClick={() => turnTo("missions")}>Explorar misiones</button></div>}</div></div>}
 
-        {view === "complete" && <div className="page-content complete-page"><div className="confetti-field" aria-hidden="true">✦　●　◆　✦　●　◆　✦</div><div className="completion-seal"><span>✓</span><b>PASAPORTE<br />COMPLETO</b><small>FESTIVAL 2026</small></div><p className="step-label">MISIÓN CUMPLIDA</p><h2>¡Completaste tu Pasaporte Seguro!</h2><p className="completion-copy">Recorriste todas las estaciones y demostraste que la diversidad, la felicidad, la seguridad, la salud y el cuidado se construyen entre todos.</p><div className="completion-name"><small>OTORGADO A</small><b>{user.name}</b><span>{user.uad} · {points} puntos</span></div><div className="completion-actions"><button className="secondary-button" onClick={() => turnTo("history")}>Ver mi historial</button><button className="primary-button" onClick={() => notify("Tu logro quedó guardado en el pasaporte.")}>Compartir mi logro <span>↗</span></button></div></div>}
-        {view === "admin" && user.role === "ADMIN" && <AdminPage missions={missions} people={adminPeople} uadOptions={catalogs.uads} busyAction={busyAction} onCreate={createAdminMission} onDelete={deleteAdminMission} />}
+        {view === "complete" && <div className="page-content complete-page"><div className="confetti-field" aria-hidden="true">✦　●　◆　✦　●　◆　✦</div><div className="completion-seal"><span>✓</span><b>PASAPORTE<br />COMPLETO</b><small>FESTIVAL 2026</small></div><p className="step-label">MISIÓN CUMPLIDA</p><h2>¡Completaste tu Pasaporte Seguro!</h2><p className="completion-copy">Recorriste todas las estaciones y demostraste que la diversidad, la felicidad, la seguridad, la salud y el cuidado se construyen entre todos.</p><div className="completion-name"><small>OTORGADO A</small><b>{user.name}</b><span>{user.uad} · {points} puntos · {unlockedBadges} insignias</span></div><div className="completion-actions"><button className="secondary-button" onClick={() => turnTo("history")}>Ver mi historial</button>{featureEnabled("badges") && <button className="secondary-button" onClick={() => turnTo("badges")}>Ver insignias</button>}</div>{featureEnabled("downloadableCard") && <FinalPassportCard name={user.name} uad={user.uad} cedula={user.cedula} points={points} missions={visibleMissions} completed={completed} badges={badges} onNotice={notify} />}</div>}
+        {view === "admin" && user.role === "ADMIN" && <AdminPage missions={missions} people={adminPeople} uadOptions={catalogs.uads} busyAction={busyAction} onCreate={createAdminMission} onDelete={deleteAdminMission} onRefresh={refreshAdminDashboard} />}
         </div>
       </div>
     </section>}
@@ -410,6 +465,7 @@ function UiIcon({ name }: { name: string }) {
     trend: <><path d="M4 18 10 12l4 3 6-8" /><path d="M15 7h5v5" /></>,
     trophy: <><path d="M8 3h8v4c0 3-1.6 5-4 5S8 10 8 7V3ZM12 12v5M8 21h8M9 17h6" /><path d="M8 5H4v2c0 2 1.5 3.5 4 3.5M16 5h4v2c0 2-1.5 3.5-4 3.5" /></>,
     gamepad: <><path d="M7.5 8h9a4.5 4.5 0 0 1 4.3 5.8l-1.1 3.6a2.2 2.2 0 0 1-3.7.8L14.1 16H9.9L8 18.2a2.2 2.2 0 0 1-3.7-.8l-1.1-3.6A4.5 4.5 0 0 1 7.5 8Z" /><path d="M8 11v4M6 13h4M16.5 12h.01M18 14h.01" /></>,
+    badge: <><path d="M12 3a6 6 0 1 1 0 12 6 6 0 0 1 0-12Z" /><path d="m8.5 14-1 7 4.5-2 4.5 2-1-7M12 6.5l1 2 2.2.3-1.6 1.5.4 2.2-2-1-2 1 .4-2.2-1.6-1.5 2.2-.3 1-2Z" /></>,
     cover: <><path d="M5 3h11a3 3 0 0 1 3 3v15H7a2 2 0 0 1-2-2V3Z" /><path d="M7 17h12M9 3v14" /></>,
     logout: <><path d="M10 5H5v14h5M14 8l4 4-4 4M8 12h10" /></>,
     trash: <><path d="M4 7h16M9 3h6l1 4H8l1-4ZM6 7l1 14h10l1-14M10 11v6M14 11v6" /></>,
@@ -422,13 +478,14 @@ function Tab({ label, icon, active, onClick }: { label: string; icon: string; ac
 function StatCard({ icon, label, value, color }: { icon: string; label: string; value: string; color: string }) { return <article className="stat-card"><span style={{ background: color }}><UiIcon name={icon} /></span><div><b>{value}</b><small>{label}</small></div></article>; }
 function GuideStep({ number, icon, title, text, color }: { number: string; icon: string; title: string; text: string; color: string }) { return <article className="guide-step"><span className="guide-number">{number}</span><div className="guide-icon" style={{ background: color }}><UiIcon name={icon} /></div><h3>{title}</h3><p>{text}</p></article>; }
 
-function AdminPage({ missions, people, uadOptions, busyAction, onCreate, onDelete }: {
+function AdminPage({ missions, people, uadOptions, busyAction, onCreate, onDelete, onRefresh }: {
   missions: Mission[];
   people: PersonProgress[];
   uadOptions: string[];
   busyAction: string;
   onCreate: (mission: Mission) => Promise<boolean>;
   onDelete: (mission: Mission) => Promise<boolean>;
+  onRefresh: () => Promise<void>;
 }) {
   const [tab, setTab] = useState<"overview" | "missions">("overview");
   const [audience, setAudience] = useState("Todas las UAD");
@@ -456,6 +513,15 @@ function AdminPage({ missions, people, uadOptions, busyAction, onCreate, onDelet
     if (await onDelete(deleteTarget)) setDeleteTarget(null);
   }
 
+  function downloadReport() {
+    const escape = (value: string | number) => `"${String(value).replace(/"/g, '""')}"`;
+    const rows = [["Colaborador", "UAD", "Misiones completadas", "Misiones disponibles", "Avance", "Puntos"], ...people.map((person) => [person.name, person.uad, person.completed, person.total, `${person.total ? Math.round((person.completed / person.total) * 100) : 0}%`, person.points])];
+    const csv = `\uFEFF${rows.map((row) => row.map(escape).join(";")).join("\n")}`;
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a"); link.href = url; link.download = "progreso-pasaporte-seguro.csv";
+    document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   return <div className="page-content admin-page">
     <div className="admin-title"><div><p className="step-label">CENTRO DE CONTROL</p><h2>Administración del festival</h2><p>Gestiona misiones y acompaña el avance de los colaboradores.</p></div><div className="admin-badge"><UiIcon name="settings" /> Modo administrador</div></div>
     <div className="admin-tabs"><button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>Resumen y progreso</button><button className={tab === "missions" ? "active" : ""} onClick={() => setTab("missions")}>Gestionar misiones</button></div>
@@ -463,9 +529,9 @@ function AdminPage({ missions, people, uadOptions, busyAction, onCreate, onDelet
     {tab === "overview" ? <>
       <div className="admin-stats"><StatCard icon="users" label="Colaboradores" value={String(people.length)} color="#9d5cff" /><StatCard icon="check" label="Misiones completadas" value={String(totalCompleted)} color="#12cfe0" /><StatCard icon="trend" label="Avance promedio" value={`${average}%`} color="#43d17d" /><StatCard icon="sparkle" label="Puntos entregados" value={totalPoints >= 1000 ? `${(totalPoints / 1000).toFixed(1)}K` : String(totalPoints)} color="#ffb703" /></div>
       {leader && <div className="leader-card"><span className="leader-avatar"><UiIcon name="trophy" /></span><div><p className="step-label">LÍDER DEL RECORRIDO</p><h3>{leader.name}</h3><p>{leader.uad} · {leader.completed} misiones completadas</p></div><b>{leader.points}<small>puntos</small></b></div>}
-      <div className="people-table"><div className="table-title"><h3>Progreso de colaboradores</h3><button>Descargar reporte ↓</button></div><div className="table-head"><span>Colaborador</span><span>UAD</span><span>Progreso</span><span>Puntos</span></div>{people.map((p) => { const pct = p.total ? Math.round((p.completed / p.total) * 100) : 0; return <div className="table-row" key={`${p.name}-${p.uad}`}><span><i>{p.name.charAt(0)}</i><b>{p.name}</b></span><span>{p.uad}</span><span><div className="mini-progress"><i style={{ width: `${pct}%` }} /></div><b>{pct}%</b></span><span className="point-value">{p.points}</span></div>; })}</div>
+      <div className="people-table"><div className="table-title"><h3>Progreso de colaboradores</h3><div className="table-actions"><button onClick={onRefresh} disabled={busyAction === "admin-refresh"}>{busyAction === "admin-refresh" ? "Actualizando..." : "Actualizar ↻"}</button><button onClick={downloadReport}>Descargar CSV ↓</button></div></div><div className="table-head"><span>Colaborador</span><span>UAD</span><span>Progreso</span><span>Puntos</span></div>{people.map((p) => { const pct = p.total ? Math.round((p.completed / p.total) * 100) : 0; return <div className="table-row" key={`${p.name}-${p.uad}`}><span><i>{p.name.charAt(0)}</i><b>{p.name}</b></span><span>{p.uad}</span><span><div className="mini-progress"><i style={{ width: `${pct}%` }} /></div><b>{pct}%</b></span><span className="point-value">{p.points}</span></div>; })}</div>
     </> : <div className="mission-admin-grid">
-      <form className="create-mission-card" onSubmit={createMission}><p className="step-label">NUEVA ACTIVIDAD</p><h3>Crear una misión</h3><label>Nombre de la misión<input name="title" placeholder="Ej. Ruta de la confianza" required /></label><label>Estación<select name="station">{stations.map((s) => <option key={s.name}>{s.name}</option>)}</select></label><label>Descripción<textarea name="description" placeholder="Explica en qué consiste el reto..." required /></label><div className="field-row"><label>Duración<input name="duration" placeholder="8 min" /></label><label>Puntos<input name="points" type="number" defaultValue="100" min="10" required /></label></div><label>¿A quién se asigna?<select value={audience === "Todas las UAD" ? "all" : "uad"} onChange={(e) => setAudience(e.target.value === "all" ? "Todas las UAD" : (uadOptions[0] || "Todas las UAD"))}><option value="all">A todas las UAD</option><option value="uad">A una UAD específica</option></select></label>{audience !== "Todas las UAD" && <label>UAD asignada<select value={audience} onChange={(e) => setAudience(e.target.value)}>{uadOptions.map((uad) => <option key={uad}>{uad}</option>)}</select></label>}<button className="primary-button" type="submit" disabled={busyAction === "create-mission"}>{busyAction === "create-mission" ? <><LoadingDot /> Publicando...</> : <>Publicar misión <UiIcon name="arrow" /></>}</button></form>
+      <form className="create-mission-card" onSubmit={createMission}><p className="step-label">NUEVA ACTIVIDAD</p><h3>Crear una misión</h3><label>Nombre de la misión<input name="title" maxLength={120} placeholder="Ej. Ruta de la confianza" required /></label><label>Estación<select name="station">{stations.map((s) => <option key={s.name}>{s.name}</option>)}</select></label><label>Descripción<textarea name="description" maxLength={700} placeholder="Explica en qué consiste el reto..." required /></label><div className="field-row"><label>Duración<input name="duration" maxLength={30} placeholder="8 min" /></label><label>Puntos<input name="points" type="number" defaultValue="100" min="10" max="1000" required /></label></div><label>¿A quién se asigna?<select value={audience === "Todas las UAD" ? "all" : "uad"} onChange={(e) => setAudience(e.target.value === "all" ? "Todas las UAD" : (uadOptions[0] || "Todas las UAD"))}><option value="all">A todas las UAD</option><option value="uad">A una UAD específica</option></select></label>{audience !== "Todas las UAD" && <label>UAD asignada<select value={audience} onChange={(e) => setAudience(e.target.value)}>{uadOptions.map((uad) => <option key={uad}>{uad}</option>)}</select></label>}<button className="primary-button" type="submit" disabled={busyAction === "create-mission"}>{busyAction === "create-mission" ? <><LoadingDot /> Publicando...</> : <>Publicar misión <UiIcon name="arrow" /></>}</button></form>
       <div className="active-missions"><div className="section-heading"><div><p className="step-label">PUBLICADAS</p><h3>Misiones activas</h3></div><span>{missions.length}</span></div>{missions.slice().reverse().map((m) => <article key={m.id}><span style={{ background: m.color }}><StationIcon station={m.station} /></span><div><b>{m.title}</b><small>{m.station} · {m.audience}</small></div><button className="delete-mission" aria-label={`Eliminar ${m.title}`} title="Eliminar misión" onClick={() => setDeleteTarget(m)}><UiIcon name="trash" /></button></article>)}</div>
     </div>}
 

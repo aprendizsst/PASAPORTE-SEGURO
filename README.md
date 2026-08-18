@@ -9,8 +9,13 @@ Versión completa de la aplicación web para GitHub Pages y Google Apps Script. 
 - Panel administrador con creación, eliminación segura y seguimiento de misiones.
 - Creador de avatares con seis tonos de piel, siete colores de cabello, siete estilos de cabello, ocho colores de camiseta y ocho accesorios.
 - Pestaña Bonus con sopa de letras, sudoku seguro y tiro al blanco.
+- **Ruta Viva del Festival** con seis mundos, avance por estación y avatar viajero.
+- Colección automática de seis insignias, sin agregar columnas al archivo de Google Sheets.
+- Tarjeta final personalizada descargable en PNG, generada directamente en el dispositivo.
+- Portada dinámica con profundidad, brillo, constelaciones y ruta de vuelo.
+- Reporte administrativo CSV y actualización manual de estadísticas.
 - Diseño adaptable para computadores, tabletas y teléfonos.
-- Caché de catálogos y misiones, restauración de sesión y límites de espera para reducir cargas innecesarias.
+- Carga diferida de minijuegos, caché por usuario, restauración de sesión, reintentos progresivos e identificadores de operación para reducir cargas y duplicados.
 
 La eliminación administrativa desactiva la misión y conserva los registros históricos de los participantes.
 
@@ -55,6 +60,12 @@ Ejecute una vez `crearAdministradorInicial`. Cuando confirme que el administrado
 
 > El backend valida la sesión y el rol en cada operación administrativa. Las contraseñas no se guardan en texto visible.
 
+### Actualización desde una versión anterior
+
+Esta actualización no elimina ni renombra hojas, columnas o registros. Puede reemplazar `Code.gs`, guardar y ejecutar nuevamente `setupPasaporteSeguro`. La función conserva las hojas existentes y crea únicamente cualquier hoja faltante.
+
+Las insignias y la tarjeta final se calculan usando `Misiones`, `Progreso` y `Bonus`; no requieren una pestaña adicional.
+
 ## 4. Publicar en GitHub Pages
 
 1. Abra su repositorio de GitHub.
@@ -72,6 +83,32 @@ npm run dev
 
 Sin una URL en `public/config.js`, la aplicación se abre en modo demostración. Para revisar el panel administrativo del modo demostración use cédula `1000000000` y contraseña `Demo1234*`.
 
+## Activar o desactivar mejoras visuales
+
+`public/config.js` incluye interruptores que permiten apagar una mejora sin borrar código:
+
+```js
+features: {
+  dynamicCover: true,
+  livingRoute: true,
+  badges: true,
+  downloadableCard: true,
+}
+```
+
+Cambie únicamente `true` por `false` si necesita desactivar temporalmente una característica.
+
+## Optimización y concurrencia
+
+- Catálogos y misiones se comparten mediante caché.
+- La primera lectura de actividad prepara cachés individuales para los demás participantes.
+- Las estadísticas administrativas se reutilizan durante 30 segundos y se actualizan solo cuando el administrador lo solicita.
+- Las escrituras repetidas llevan un identificador temporal para evitar duplicados durante reintentos.
+- Las actualizaciones de filas se realizan en bloque.
+- Los minijuegos cargan su código únicamente al abrir la pestaña Bonus.
+
+Estas medidas reducen notablemente las consultas, pero Google Apps Script y Google Sheets conservan cuotas propias. Antes del evento se recomienda hacer una prueba de carga progresiva en una copia de la hoja y del despliegue, nunca directamente sobre los datos reales.
+
 ## Estructura de datos
 
 - `Usuarios`: perfiles, UAD, rol y credenciales cifradas.
@@ -86,4 +123,5 @@ Sin una URL en `public/config.js`, la aplicación se abre en modo demostración.
 1. Abra **Actions** y espere que `Desplegar Pasaporte Seguro` aparezca en verde.
 2. Abra el sitio publicado y actualice con `Ctrl + F5`.
 3. Pruebe registro, inicio de sesión, cambio de avatar, una misión y un minijuego.
-4. Ingrese como administrador y confirme que puede crear y eliminar una misión.
+4. Revise la Ruta Viva, la pestaña Insignias y la descarga de la tarjeta final.
+5. Ingrese como administrador y confirme que puede crear, eliminar y actualizar misiones, además de descargar el reporte CSV.
