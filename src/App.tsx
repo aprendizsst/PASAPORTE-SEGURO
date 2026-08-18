@@ -9,10 +9,12 @@ const MiniGamesPage = lazy(() => import("./MiniGames"));
 type View = "dashboard" | "guide" | "missions" | "bonus" | "badges" | "history" | "complete" | "admin";
 type Role = "USER" | "ADMIN";
 type User = { name: string; cedula: string; phone: string; email: string; cargo: string; uad: string; avatar: string; role: Role };
-type Mission = { id: number; station: string; icon: string; color: string; title: string; description: string; points: number; audience: string; duration: string };
-type AvatarConfig = { skin: number; hair: number; style: number; shirt: number; accessory: number };
+type Mission = { id: number; station: string; icon: string; color: string; title: string; description: string; points: number; audience: string; duration: string; sealCode?: string; evidenceRequired?: boolean };
+type AvatarConfig = { skin: number; hair: number; style: number; shirt: number; accessories: number[]; accessoryColors: Record<number, number> };
 type PersonProgress = { name: string; uad: string; completed: number; total: number; points: number };
-type SessionBundle = { user: User; missions: Mission[]; historyMissions?: Mission[]; completed: number[]; started?: number[]; history?: Record<number, string>; adminPeople?: PersonProgress[]; bonusCompleted?: string[]; bonusScores?: Record<string, number>; token: string };
+type EvidencePayload = { name: string; mime: string; data: string; size: number };
+type AdminEvidence = { id: string; userName: string; missionTitle: string; fileName: string; mime: string; size: number; url: string; status: string; createdAt: string };
+type SessionBundle = { user: User; missions: Mission[]; historyMissions?: Mission[]; completed: number[]; started?: number[]; history?: Record<number, string>; adminPeople?: PersonProgress[]; adminEvidence?: AdminEvidence[]; bonusCompleted?: string[]; bonusScores?: Record<string, number>; token: string };
 type StoredSession = { savedAt: number; bundle: SessionBundle };
 
 const stations = [
@@ -25,12 +27,12 @@ const stations = [
 ];
 
 const missionsSeed: Mission[] = [
-  { id: 1, station: "Estación Diversidad", icon: "◉", color: "#9d5cff", title: "Todos contamos", description: "Participa en el reto de inclusión y reconoce una fortaleza única de otro compañero.", points: 120, audience: "Todas las UAD", duration: "8 min" },
-  { id: 2, station: "Estación Felicidad", icon: "♡", color: "#ffb703", title: "La pausa que suma", description: "Completa la dinámica de gratitud y deja un mensaje positivo en la estación.", points: 100, audience: "Todas las UAD", duration: "6 min" },
-  { id: 3, station: "Estación Seguridad", icon: "◇", color: "#12cfe0", title: "Cazadores de riesgos", description: "Identifica tres condiciones seguras dentro del recorrido y valida tu respuesta con el guía.", points: 150, audience: "Sede Central", duration: "10 min" },
-  { id: 4, station: "Estación Salud", icon: "+", color: "#43d17d", title: "Pulso saludable", description: "Acepta el reto de hábitos saludables y registra el compromiso que aplicarás esta semana.", points: 100, audience: "Todas las UAD", duration: "7 min" },
-  { id: 5, station: "Estación Amor Propio", icon: "✦", color: "#ff5c9b", title: "Mi mejor versión", description: "Elige una práctica de autocuidado y completa la actividad guiada de bienestar emocional.", points: 130, audience: "Todas las UAD", duration: "9 min" },
-  { id: 6, station: "Estación Ambiental", icon: "♧", color: "#8bd33f", title: "Huella consciente", description: "Clasifica correctamente los residuos del desafío y descubre tu eco-acción diaria.", points: 110, audience: "Sede Central", duration: "8 min" },
+  { id: 1, station: "Estación Diversidad", icon: "◉", color: "#9d5cff", title: "Todos contamos", description: "Participa en el reto de inclusión y reconoce una fortaleza única de otro compañero.", points: 120, audience: "Todas las UAD", duration: "8 min", sealCode: "DIVER6" },
+  { id: 2, station: "Estación Felicidad", icon: "♡", color: "#ffb703", title: "La pausa que suma", description: "Completa la dinámica de gratitud y deja un mensaje positivo en la estación.", points: 100, audience: "Todas las UAD", duration: "6 min", sealCode: "FELIZ6" },
+  { id: 3, station: "Estación Seguridad", icon: "◇", color: "#12cfe0", title: "Cazadores de riesgos", description: "Identifica tres condiciones seguras dentro del recorrido y valida tu respuesta con el guía.", points: 150, audience: "Sede Central", duration: "10 min", sealCode: "SEGUR6", evidenceRequired: true },
+  { id: 4, station: "Estación Salud", icon: "+", color: "#43d17d", title: "Pulso saludable", description: "Acepta el reto de hábitos saludables y registra el compromiso que aplicarás esta semana.", points: 100, audience: "Todas las UAD", duration: "7 min", sealCode: "SALUD6" },
+  { id: 5, station: "Estación Amor Propio", icon: "✦", color: "#ff5c9b", title: "Mi mejor versión", description: "Elige una práctica de autocuidado y completa la actividad guiada de bienestar emocional.", points: 130, audience: "Todas las UAD", duration: "9 min", sealCode: "AMOR26" },
+  { id: 6, station: "Estación Ambiental", icon: "♧", color: "#8bd33f", title: "Huella consciente", description: "Clasifica correctamente los residuos del desafío y descubre tu eco-acción diaria.", points: 110, audience: "Sede Central", duration: "8 min", sealCode: "VERDE6" },
 ];
 
 const skinTones = ["#f8d5c2", "#efbd9f", "#d89572", "#a96848", "#70402f", "#3f251f"];
@@ -55,7 +57,8 @@ const accessories = [
   { id: "flower", label: "Flor", icon: "✿" },
   { id: "cap", label: "Gorra", icon: "⌁" },
 ];
-const defaultAvatar = "avatar:v1:2:0:1:0:0";
+const accessoryColors = ["#172440", "#9d5cff", "#12cfe0", "#ff5c9b", "#ffb703", "#43d17d", "#ffffff", "#e95454"];
+const defaultAvatar = "avatar:v2:2:0:1:0:";
 const cargos = ["Auxiliar administrativo", "Profesional asistencial", "Líder de proceso", "Coordinador(a)", "Analista", "Otro"];
 const uads = ["Sede Central", "UAD Duitama", "UAD Chiquinquirá", "UAD Miraflores", "UAD Guateque"];
 const demoUser: User = { name: "Valentina Segura", cedula: "1010101010", phone: "300 555 0198", email: "valentina@empresa.com", cargo: "Profesional asistencial", uad: "Sede Central", avatar: defaultAvatar, role: "USER" };
@@ -82,10 +85,11 @@ function featureEnabled(name: string) {
 
 const SESSION_BUNDLE_KEY = "pasaporte_session_bundle_v2";
 const inflightReads = new Map<string, Promise<unknown>>();
-const WRITE_API_ACTIONS = new Set(["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "adminCreateMission", "adminDeleteMission"]);
+const WRITE_API_ACTIONS = new Set(["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "adminCreateMission", "adminEditMission", "adminDeleteMission"]);
 
-function apiPolicy(action: string) {
+function apiPolicy(action: string, payload?: Record<string, unknown>) {
   if (action === "login" || action === "register") return { attempts: 2, timeoutMs: 14000 };
+  if (action === "completeMission" && payload?.evidence) return { attempts: 2, timeoutMs: 45000 };
   if (WRITE_API_ACTIONS.has(action)) return { attempts: 3, timeoutMs: 14000 };
   return { attempts: 2, timeoutMs: 10000 };
 }
@@ -101,7 +105,7 @@ async function callApi(action: string, payload: Record<string, unknown> = {}) {
   if (typeof navigator !== "undefined" && navigator.onLine === false) throw new Error("No tienes conexión. Revisa internet e intenta nuevamente.");
   const url = apiUrlOrThrow();
   const requestId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const policy = apiPolicy(action);
+  const policy = apiPolicy(action, payload);
   const inflightKey = action === "catalogs" ? "catalogs" : action === "session" ? `session:${String(payload.token || "")}` : "";
 
   const request = async () => {
@@ -167,19 +171,59 @@ function isExpiredSessionError(error: unknown) {
 }
 
 function decodeAvatar(value: string): AvatarConfig {
-  if (!value?.startsWith("avatar:v1:")) return { skin: 2, hair: 0, style: 1, shirt: 0, accessory: 0 };
+  const fallback: AvatarConfig = { skin: 2, hair: 0, style: 1, shirt: 0, accessories: [], accessoryColors: {} };
+  if (value?.startsWith("avatar:v2:")) {
+    const [skin, hair, style, shirt, encoded = ""] = value.replace("avatar:v2:", "").split(":");
+    const selected = encoded.split(",").filter(Boolean).slice(0, 3).map((item) => item.split("-").map(Number)).filter(([id, color]) => id > 0 && id < accessories.length && color >= 0 && color < accessoryColors.length);
+    return {
+      skin: Math.min(Math.max(Number(skin) || 0, 0), skinTones.length - 1), hair: Math.min(Math.max(Number(hair) || 0, 0), hairColors.length - 1),
+      style: Math.min(Math.max(Number(style) || 0, 0), hairStyles.length - 1), shirt: Math.min(Math.max(Number(shirt) || 0, 0), shirtColors.length - 1),
+      accessories: selected.map(([id]) => id), accessoryColors: Object.fromEntries(selected.map(([id, color]) => [id, color])),
+    };
+  }
+  if (!value?.startsWith("avatar:v1:")) return fallback;
   const values = value.replace("avatar:v1:", "").split(":").map(Number);
+  const legacyAccessory = Math.min(Math.max(values[4] || 0, 0), accessories.length - 1);
   return {
     skin: Math.min(Math.max(values[0] || 0, 0), skinTones.length - 1),
     hair: Math.min(Math.max(values[1] || 0, 0), hairColors.length - 1),
     style: Math.min(Math.max(values[2] || 0, 0), hairStyles.length - 1),
     shirt: Math.min(Math.max(values[3] || 0, 0), shirtColors.length - 1),
-    accessory: Math.min(Math.max(values[4] || 0, 0), accessories.length - 1),
+    accessories: legacyAccessory ? [legacyAccessory] : [], accessoryColors: legacyAccessory ? { [legacyAccessory]: 0 } : {},
   };
 }
 
 function encodeAvatar(config: AvatarConfig) {
-  return `avatar:v1:${config.skin}:${config.hair}:${config.style}:${config.shirt}:${config.accessory}`;
+  const encoded = config.accessories.slice(0, 3).map((id) => `${id}-${config.accessoryColors[id] || 0}`).join(",");
+  return `avatar:v2:${config.skin}:${config.hair}:${config.style}:${config.shirt}:${encoded}`;
+}
+
+function toggleAccessory(config: AvatarConfig, id: number) {
+  if (!id) return { ...config, accessories: [], accessoryColors: {} };
+  const groups = [[1, 2], [3, 4, 6, 7], [5]];
+  const group = groups.find((items) => items.includes(id)) || [id];
+  if (config.accessories.includes(id)) return { ...config, accessories: config.accessories.filter((item) => item !== id) };
+  const next = [...config.accessories.filter((item) => !group.includes(item)), id].slice(-3);
+  return { ...config, accessories: next, accessoryColors: { ...config.accessoryColors, [id]: config.accessoryColors[id] || 0 } };
+}
+
+async function prepareEvidence(file: File): Promise<EvidencePayload> {
+  const allowed = file.type.startsWith("image/") || file.type.startsWith("video/");
+  if (!allowed) throw new Error("La evidencia debe ser una foto o un video.");
+  if (file.size > 7 * 1024 * 1024) throw new Error("La evidencia supera 7 MB.");
+  let output: Blob = file;
+  let name = file.name;
+  if (file.type.startsWith("image/") && file.type !== "image/gif") {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas"); canvas.width = Math.max(1, Math.round(bitmap.width * scale)); canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height); bitmap.close();
+    output = await new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("No fue posible optimizar la foto.")), "image/jpeg", .78));
+    name = file.name.replace(/\.[^.]+$/, "") + ".jpg";
+  }
+  if (output.size > 7 * 1024 * 1024) throw new Error("La evidencia optimizada supera 7 MB.");
+  const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result || "")); reader.onerror = () => reject(new Error("No fue posible leer la evidencia.")); reader.readAsDataURL(output); });
+  return { name, mime: output.type || file.type, data: dataUrl.split(",")[1] || "", size: output.size };
 }
 
 function tiltCover(event: React.PointerEvent<HTMLDivElement>) {
@@ -208,6 +252,9 @@ export default function Home() {
   const [completed, setCompleted] = useState<number[]>([1, 2]);
   const [started, setStarted] = useState<number[]>([3]);
   const [stampMission, setStampMission] = useState<Mission | null>(null);
+  const [validationMission, setValidationMission] = useState<Mission | null>(null);
+  const [sealCode, setSealCode] = useState("");
+  const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [avatarDraft, setAvatarDraft] = useState<AvatarConfig>(decodeAvatar(defaultAvatar));
   const [missionFilter, setMissionFilter] = useState("Todas");
@@ -218,6 +265,7 @@ export default function Home() {
   const [sessionToken, setSessionToken] = useState("");
   const [historyDates, setHistoryDates] = useState<Record<number, string>>({});
   const [adminPeople, setAdminPeople] = useState(demoPeople);
+  const [adminEvidence, setAdminEvidence] = useState<AdminEvidence[]>([]);
   const [pageDirection, setPageDirection] = useState<"next" | "prev">("next");
   const [pageKey, setPageKey] = useState(0);
   const [sessionOpening, setSessionOpening] = useState(false);
@@ -288,9 +336,10 @@ export default function Home() {
       bonusScores,
       token: sessionToken,
       ...(adminDashboardLoaded ? { adminPeople } : {}),
+      ...(adminDashboardLoaded ? { adminEvidence } : {}),
     };
     localStorage.setItem(SESSION_BUNDLE_KEY, JSON.stringify({ savedAt: Date.now(), bundle } satisfies StoredSession));
-  }, [adminDashboardLoaded, adminPeople, bonusCompleted, bonusScores, completed, historyDates, historyMissions, missions, sessionToken, started, user]);
+  }, [adminDashboardLoaded, adminEvidence, adminPeople, bonusCompleted, bonusScores, completed, historyDates, historyMissions, missions, sessionToken, started, user]);
 
   function notify(message: string) { setToast(message); window.setTimeout(() => setToast(""), 2800); }
   function applyBundle(data: SessionBundle, persist = true) {
@@ -301,6 +350,7 @@ export default function Home() {
     setStarted(data.started || []);
     setHistoryDates(data.history || {});
     setAdminPeople(data.adminPeople || []);
+    setAdminEvidence(data.adminEvidence || []);
     setBonusCompleted(data.bonusCompleted || []);
     setBonusScores(data.bonusScores || {});
     setSessionToken(data.token);
@@ -372,6 +422,9 @@ export default function Home() {
       notify(error instanceof Error ? error.message : "No fue posible iniciar la misión.");
     } finally { setBusyAction(""); }
   }
+  function requestMissionSeal(mission: Mission) {
+    setSealCode(""); setEvidenceFile(null); setValidationMission(mission);
+  }
   async function finishMission(mission: Mission) {
     if (busyAction) return;
     const previousCompleted = completed;
@@ -385,10 +438,14 @@ export default function Home() {
     setStarted((current) => current.filter((id) => id !== mission.id));
     setBusyAction(`finish-${mission.id}`);
     try {
+      const evidence = evidenceFile ? await prepareEvidence(evidenceFile) : undefined;
       if (getApiUrl()) {
-        const data = await callApi("completeMission", { token: sessionToken, missionId: mission.id }) as { completedAt?: string };
+        const data = await callApi("completeMission", { token: sessionToken, missionId: mission.id, sealCode: sealCode.trim().toUpperCase(), evidence }) as { completedAt?: string };
         if (data.completedAt) setHistoryDates((current) => ({ ...current, [mission.id]: data.completedAt as string }));
+      } else if ((mission.sealCode || "RUTA26") !== sealCode.trim().toUpperCase()) {
+        throw new Error(`Código incorrecto. En demostración usa ${mission.sealCode || "RUTA26"}.`);
       }
+      setValidationMission(null); setSealCode(""); setEvidenceFile(null);
       setStampMission(mission);
     } catch (error) {
       setCompleted(previousCompleted);
@@ -404,8 +461,10 @@ export default function Home() {
     try {
       let created = mission;
       if (getApiUrl()) {
-        const data = await callApi("adminCreateMission", { token: sessionToken, mission }) as { id: number };
-        created = { ...mission, id: data.id };
+        const data = await callApi("adminCreateMission", { token: sessionToken, mission }) as { id: number; sealCode?: string };
+        created = { ...mission, id: data.id, sealCode: data.sealCode };
+      } else {
+        created = { ...mission, sealCode: Math.random().toString(36).slice(2, 8).toUpperCase() };
       }
       setMissions((current) => [...current, created]);
       notify("Misión creada y publicada correctamente.");
@@ -414,6 +473,21 @@ export default function Home() {
       notify(error instanceof Error ? error.message : "No fue posible publicar la misión.");
       return false;
     } finally { setBusyAction(""); }
+  }
+  async function editAdminMission(mission: Mission, regenerateCode: boolean) {
+    setBusyAction(`edit-${mission.id}`);
+    try {
+      let updated = mission;
+      if (getApiUrl()) {
+        const data = await callApi("adminEditMission", { token: sessionToken, mission, regenerateCode }) as { mission: Mission };
+        updated = data.mission;
+      } else if (regenerateCode) updated = { ...mission, sealCode: Math.random().toString(36).slice(2, 8).toUpperCase() };
+      setMissions((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setHistoryMissions((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+      notify("Misión actualizada correctamente.");
+      return true;
+    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible editar la misión."); return false; }
+    finally { setBusyAction(""); }
   }
   async function deleteAdminMission(mission: Mission) {
     const previous = missions;
@@ -435,7 +509,10 @@ export default function Home() {
     try {
       if (getApiUrl()) {
         const data = await callApi("adminDashboard", { token: sessionToken });
-        setAdminPeople((data as { people?: PersonProgress[] }).people || []);
+        const dashboard = data as { people?: PersonProgress[]; missions?: Mission[]; evidence?: AdminEvidence[] };
+        setAdminPeople(dashboard.people || []);
+        setAdminEvidence(dashboard.evidence || []);
+        if (dashboard.missions?.length) setMissions(dashboard.missions);
         setAdminDashboardLoaded(true);
       }
       notify("Tablero administrativo actualizado.");
@@ -516,7 +593,7 @@ export default function Home() {
         {view === "guide" && <div className="page-content guide-page"><div className="center-heading"><p className="step-label">GUÍA DE VIAJE</p><h2>¿Cómo usar tu pasaporte?</h2><p>Cuatro pasos sencillos para vivir la experiencia completa.</p></div><div className="guide-steps"><GuideStep number="01" icon="compass" title="Explora las misiones" text="Abre el selector y descubre las actividades disponibles para tu UAD." color="#9d5cff" /><GuideStep number="02" icon="pin" title="Visita la estación" text="Acércate a la estación indicada y pulsa Iniciar misión cuando estés listo." color="#12cfe0" /><GuideStep number="03" icon="check" title="Completa el reto" text="Realiza la actividad con el facilitador y registra tu misión como completada." color="#ffb703" /><GuideStep number="04" icon="sparkle" title="Colecciona sellos" text="Suma puntos, revisa tu historial y completa todas las páginas del pasaporte." color="#ff5c9b" /></div><div className="tip-card"><span><UiIcon name="sparkle" /></span><div><b>Consejo de viajero</b><p>Las misiones disponibles dependen de tu UAD. Vuelve a revisar durante el festival: pueden aparecer retos nuevos.</p></div></div><button className="primary-button centered" onClick={() => turnTo("missions")}>Ver misiones disponibles <UiIcon name="arrow" /></button></div>}
 
         {view === "missions" && <div className="page-content missions-page"><div className="section-heading missions-heading"><div><p className="step-label">DESTINO ALCANZADO</p><h2>{missionFilter === "Todas" ? "Todas las misiones del festival" : missionFilter}</h2><p>{filteredMissions.length} actividades disponibles para {user.uad}.</p></div><div className="mission-heading-actions"><button className="world-return-button" onClick={() => turnTo("dashboard")}><UiIcon name="compass" /> Volver al mundo 3D</button><div className="points-pill"><UiIcon name="sparkle" /> {points} puntos</div></div></div><div className="filter-row"><button className={missionFilter === "Todas" ? "active" : ""} onClick={() => setMissionFilter("Todas")}>Todas</button>{stations.map((s) => <button aria-label={s.name} title={s.name} className={missionFilter === s.name ? "active" : ""} style={{ "--station": s.color } as React.CSSProperties} key={s.name} onClick={() => setMissionFilter(s.name)}><StationIcon station={s.name} /><span>{s.name.replace("Estación ", "")}</span></button>)}</div>
-          <div className="mission-grid">{filteredMissions.map((m) => { const done = completed.includes(m.id), active = started.includes(m.id), isStarting = busyAction === `start-${m.id}`, isFinishing = busyAction === `finish-${m.id}`; return <article className={`mission-card ${done ? "completed" : ""}`} key={m.id} style={{ "--station": m.color } as React.CSSProperties}><div className="mission-top"><span className="station-icon"><StationIcon station={m.station} /></span><span className="mission-status">{done ? "✓ SELLADA" : active ? "● EN CURSO" : "DISPONIBLE"}</span></div><p className="station-name">{m.station}</p><h3>{m.title}</h3><p>{m.description}</p><div className="mission-meta"><span><UiIcon name="clock" /> {m.duration}</span><span><UiIcon name="sparkle" /> {m.points} pts</span><span><UiIcon name="pin" /> {m.audience}</span></div>{done ? <button className="mission-button done-button" disabled>Pasaporte sellado <UiIcon name="check" /></button> : active ? <button className="mission-button" disabled={isFinishing} onClick={() => finishMission(m)}>{isFinishing ? <><LoadingDot /> Sellando...</> : <>Completar y sellar <UiIcon name="check" /></>}</button> : <button className="mission-button outline" disabled={isStarting} onClick={() => startMission(m.id)}>{isStarting ? <><LoadingDot /> Iniciando...</> : <>Iniciar misión <UiIcon name="play" /></>}</button>}</article> })}</div>
+          <div className="mission-grid">{filteredMissions.map((m) => { const done = completed.includes(m.id), active = started.includes(m.id), isStarting = busyAction === `start-${m.id}`; return <article className={`mission-card ${done ? "completed" : ""}`} key={m.id} style={{ "--station": m.color } as React.CSSProperties}><div className="mission-top"><span className="station-icon"><StationIcon station={m.station} /></span><span className="mission-status">{done ? "✓ SELLADA" : active ? "● EN CURSO" : "DISPONIBLE"}</span></div><p className="station-name">{m.station}</p><h3>{m.title}</h3><p>{m.description}</p><div className="mission-meta"><span><UiIcon name="clock" /> {m.duration}</span><span><UiIcon name="sparkle" /> {m.points} pts</span><span><UiIcon name="pin" /> {m.audience}</span>{m.evidenceRequired && <span><UiIcon name="camera" /> Evidencia requerida</span>}</div>{done ? <button className="mission-button done-button" disabled>Pasaporte sellado <UiIcon name="check" /></button> : active ? <button className="mission-button" onClick={() => requestMissionSeal(m)}>Validar y sellar <UiIcon name="check" /></button> : <button className="mission-button outline" disabled={isStarting} onClick={() => startMission(m.id)}>{isStarting ? <><LoadingDot /> Iniciando...</> : <>Iniciar misión <UiIcon name="play" /></>}</button>}</article> })}</div>
         </div>}
 
         {view === "bonus" && <Suspense fallback={<div className="page-content lazy-page-loader"><LoadingDot /><b>Preparando la zona bonus...</b></div>}><MiniGamesPage completed={bonusCompleted} scores={bonusScores} busy={busyAction} onComplete={completeBonus} /></Suspense>}
@@ -525,8 +602,8 @@ export default function Home() {
 
         {view === "history" && <div className="page-content history-page"><div className="section-heading"><div><p className="step-label">BITÁCORA PERSONAL</p><h2>Historial de misiones</h2><p>Todos los sellos y experiencias que has coleccionado.</p></div><div className="passport-number">PASAPORTE Nº <b>{user.cedula.slice(-6).padStart(6, "0")}</b></div></div><div className="history-list">{completedHistory.length ? completedHistory.map((m, i) => <article className="history-item" key={m.id}><span className="history-icon" style={{ background: m.color }}><StationIcon station={m.station} /></span><div><small>{m.station}</small><h3>{m.title}</h3><p>Completada el {historyDates[m.id] ? new Date(historyDates[m.id]).toLocaleDateString("es-CO", { day: "numeric", month: "long", year: "numeric" }) : `${i === 0 ? "10" : "11"} de agosto de 2026`} · {m.duration}</p></div><div className="history-points">+{m.points}<small>puntos</small></div><span className="mini-stamp">SELLADA</span></article>) : <div className="empty-state"><span><UiIcon name="compass" /></span><h3>Tu bitácora está lista</h3><p>Completa tu primera misión para estrenar esta página.</p><button className="primary-button" onClick={() => turnTo("missions")}>Explorar misiones</button></div>}</div></div>}
 
-        {view === "complete" && <div className="page-content complete-page"><div className="confetti-field" aria-hidden="true">✦　●　◆　✦　●　◆　✦</div><div className="completion-seal"><span>✓</span><b>PASAPORTE<br />COMPLETO</b><small>FESTIVAL 2026</small></div><p className="step-label">MISIÓN CUMPLIDA</p><h2>¡Completaste tu Pasaporte Seguro!</h2><p className="completion-copy">Recorriste todas las estaciones y demostraste que la diversidad, la felicidad, la seguridad, la salud y el cuidado se construyen entre todos.</p><div className="completion-name"><small>OTORGADO A</small><b>{user.name}</b><span>{user.uad} · {points} puntos · {unlockedBadges} insignias</span></div><div className="completion-actions"><button className="secondary-button" onClick={() => turnTo("history")}>Ver mi historial</button>{featureEnabled("badges") && <button className="secondary-button" onClick={() => turnTo("badges")}>Ver insignias</button>}</div>{featureEnabled("downloadableCard") && <FinalPassportCard name={user.name} uad={user.uad} cedula={user.cedula} points={points} missions={visibleMissions} completed={completed} badges={badges} onNotice={notify} />}</div>}
-        {view === "admin" && user.role === "ADMIN" && <AdminPage missions={missions} people={adminPeople} uadOptions={catalogs.uads} busyAction={busyAction} onCreate={createAdminMission} onDelete={deleteAdminMission} onRefresh={refreshAdminDashboard} />}
+        {view === "complete" && <div className="page-content complete-page"><div className="confetti-field" aria-hidden="true">✦　●　◆　✦　●　◆　✦</div><div className="completion-seal"><span>✓</span><b>PASAPORTE<br />COMPLETO</b><small>FESTIVAL 2026</small></div><p className="step-label">MISIÓN CUMPLIDA</p><h2>¡Completaste tu Pasaporte Seguro!</h2><p className="completion-copy">Recorriste todas las estaciones y demostraste que la diversidad, la felicidad, la seguridad, la salud y el cuidado se construyen entre todos.</p><div className="completion-name"><small>OTORGADO A</small><b>{user.name}</b><span>{user.uad} · {points} puntos · {unlockedBadges} insignias</span></div><div className="completion-actions"><button className="secondary-button" onClick={() => turnTo("history")}>Ver mi historial</button>{featureEnabled("badges") && <button className="secondary-button" onClick={() => turnTo("badges")}>Ver insignias</button>}</div>{featureEnabled("downloadableCard") && <FinalPassportCard name={user.name} uad={user.uad} cedula={user.cedula} avatar={user.avatar} points={points} missions={visibleMissions} completed={completed} badges={badges} onNotice={notify} />}</div>}
+        {view === "admin" && user.role === "ADMIN" && <AdminPage missions={missions} people={adminPeople} evidence={adminEvidence} uadOptions={catalogs.uads} busyAction={busyAction} onCreate={createAdminMission} onEdit={editAdminMission} onDelete={deleteAdminMission} onRefresh={refreshAdminDashboard} />}
         </div>
       </div>
     </section>}
@@ -536,9 +613,11 @@ export default function Home() {
       <AvatarOption label="Estilo de cabello"><div className="text-options">{hairStyles.map((style, index) => <button className={avatarDraft.style === index ? "selected" : ""} key={style.id} onClick={() => setAvatarDraft({ ...avatarDraft, style: index })}>{style.label}</button>)}</div></AvatarOption>
       <AvatarOption label="Color de cabello"><div className="color-options">{hairColors.map((color, index) => <button aria-label={`Color de cabello ${index + 1}`} className={avatarDraft.hair === index ? "selected" : ""} style={{ background: color }} key={color} onClick={() => setAvatarDraft({ ...avatarDraft, hair: index })} />)}</div></AvatarOption>
       <AvatarOption label="Color de camiseta"><div className="color-options">{shirtColors.map((color, index) => <button aria-label={`Color de camiseta ${index + 1}`} className={avatarDraft.shirt === index ? "selected" : ""} style={{ background: color }} key={color} onClick={() => setAvatarDraft({ ...avatarDraft, shirt: index })} />)}</div></AvatarOption>
-      <AvatarOption label="Accesorio"><div className="accessory-options">{accessories.map((item, index) => <button className={avatarDraft.accessory === index ? "selected" : ""} key={item.id} onClick={() => setAvatarDraft({ ...avatarDraft, accessory: index })}><span>{item.icon}</span>{item.label}</button>)}</div></AvatarOption>
+      <AvatarOption label="Accesorios (hasta 3)"><div className="accessory-options">{accessories.map((item, index) => <button className={(index === 0 ? avatarDraft.accessories.length === 0 : avatarDraft.accessories.includes(index)) ? "selected" : ""} key={item.id} onClick={() => setAvatarDraft(toggleAccessory(avatarDraft, index))}><span>{item.icon}</span>{item.label}</button>)}</div></AvatarOption>
+      {!!avatarDraft.accessories.length && <AvatarOption label="Colores de accesorios"><div className="accessory-color-list">{avatarDraft.accessories.map((id) => <div key={id}><b>{accessories[id].label}</b><span>{accessoryColors.map((color, index) => <button aria-label={`${accessories[id].label}, color ${index + 1}`} className={(avatarDraft.accessoryColors[id] || 0) === index ? "selected" : ""} style={{ background: color }} key={color} onClick={() => setAvatarDraft({ ...avatarDraft, accessoryColors: { ...avatarDraft.accessoryColors, [id]: index } })} />)}</span></div>)}</div></AvatarOption>}
       <button className="primary-button save-avatar" disabled={busyAction === "avatar"} onClick={saveAvatar}>{busyAction === "avatar" ? <><LoadingDot /> Guardando...</> : <>Guardar mi avatar <UiIcon name="check" /></>}</button>
     </div></div></div>}
+    {validationMission && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Validar misión"><form className="mission-validation-modal" onSubmit={(event) => { event.preventDefault(); void finishMission(validationMission); }}><button className="close-button" type="button" onClick={() => setValidationMission(null)}>×</button><div className="validation-orb" style={{ "--station": validationMission.color } as React.CSSProperties}><StationIcon station={validationMission.station} /></div><p className="step-label">CONTROL DE ESTACIÓN</p><h2>Valida “{validationMission.title}”</h2><p>Solicita al facilitador el código único de esta misión. No se mostrará públicamente.</p><label>Código de sellado<input value={sealCode} onChange={(event) => setSealCode(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8))} autoComplete="one-time-code" placeholder="••••••" minLength={6} maxLength={8} required /></label><label className="evidence-drop"><span><UiIcon name="camera" /></span><b>{evidenceFile ? evidenceFile.name : "Subir foto o video"}</b><small>{validationMission.evidenceRequired ? "Obligatoria · máximo 7 MB" : "Opcional · máximo 7 MB"}</small><input type="file" accept="image/*,video/*" onChange={(event) => setEvidenceFile(event.target.files?.[0] || null)} required={!!validationMission.evidenceRequired} /></label><p className="privacy-note">La foto se comprime antes de enviarse. El video solo se carga al confirmar.</p><button className="primary-button" type="submit" disabled={busyAction === `finish-${validationMission.id}`}>{busyAction === `finish-${validationMission.id}` ? <><LoadingDot /> Validando...</> : <>Validar y obtener sello <UiIcon name="check" /></>}</button></form></div>}
     {stampMission && <div className="modal-backdrop" role="dialog" aria-modal="true"><div className="stamp-modal"><div className="animated-stamp" style={{ "--station": stampMission.color } as React.CSSProperties}><span>✓</span><b>MISIÓN<br />COMPLETADA</b></div><p className="step-label">NUEVO SELLO</p><h2>¡Lo hiciste!</h2><p>Completaste <b>{stampMission.title}</b> y sumaste <b>{stampMission.points} puntos</b> a tu pasaporte.</p><button className="primary-button" onClick={closeStamp}>Continuar mi recorrido <span>→</span></button></div></div>}
     {sessionOpening && <div className="entry-transition" aria-hidden="true"><div className="entry-book"><span className="entry-left">PASAPORTE</span><span className="entry-right"><b>¡BIENVENIDO!</b><i>Tu viaje comienza ahora</i></span></div></div>}
     {toast && <div className="toast" role="status"><span>✓</span>{toast}</div>}
@@ -548,9 +627,8 @@ export default function Home() {
 function AvatarPortrait({ value, size = "small" }: { value: string; size?: "tiny" | "small" | "large" }) {
   const config = decodeAvatar(value);
   const style = hairStyles[config.style];
-  const accessory = accessories[config.accessory];
-  return <span className={`custom-avatar avatar-${size} hair-${style.id} accessory-${accessory.id}`} style={{ "--skin": skinTones[config.skin], "--hair": hairColors[config.hair], "--shirt": shirtColors[config.shirt] } as React.CSSProperties} aria-label={`Avatar con cabello ${style.label.toLowerCase()}`}>
-    <i className="portrait-shirt" /><i className="portrait-neck" /><i className="portrait-hair-back" /><i className="portrait-ear left" /><i className="portrait-ear right" /><i className="portrait-face"><b className="portrait-brow left" /><b className="portrait-brow right" /><b className="portrait-eye left" /><b className="portrait-eye right" /><b className="portrait-nose" /><b className="portrait-smile" /></i><i className="portrait-hair-front" /><i className="portrait-accessory" />
+  return <span className={`custom-avatar avatar-${size} hair-${style.id} avatar-3d`} style={{ "--skin": skinTones[config.skin], "--hair": hairColors[config.hair], "--shirt": shirtColors[config.shirt] } as React.CSSProperties} aria-label={`Avatar 3D con cabello ${style.label.toLowerCase()} y ${config.accessories.length} accesorios`}>
+    <i className="portrait-shirt" /><i className="portrait-neck" /><i className="portrait-hair-back" /><i className="portrait-ear left" /><i className="portrait-ear right" /><i className="portrait-face"><b className="portrait-brow left" /><b className="portrait-brow right" /><b className="portrait-eye left" /><b className="portrait-eye right" /><b className="portrait-nose" /><b className="portrait-smile" /></i><i className="portrait-hair-front" />{config.accessories.map((id) => <i key={id} className={`portrait-accessory accessory-layer accessory-${accessories[id].id}`} style={{ "--accessory": accessoryColors[config.accessoryColors[id] || 0] } as React.CSSProperties} />)}
   </span>;
 }
 
@@ -588,6 +666,9 @@ function UiIcon({ name }: { name: string }) {
     cover: <><path d="M5 3h11a3 3 0 0 1 3 3v15H7a2 2 0 0 1-2-2V3Z" /><path d="M7 17h12M9 3v14" /></>,
     logout: <><path d="M10 5H5v14h5M14 8l4 4-4 4M8 12h10" /></>,
     trash: <><path d="M4 7h16M9 3h6l1 4H8l1-4ZM6 7l1 14h10l1-14M10 11v6M14 11v6" /></>,
+    edit: <><path d="m4 16-.8 4.8L8 20l10.5-10.5-4-4L4 16Z" /><path d="m12.8 7.2 4 4" /></>,
+    camera: <><path d="M4 7h3l1.5-2h7L17 7h3v12H4V7Z" /><circle cx="12" cy="13" r="3.5" /></>,
+    key: <><circle cx="8" cy="12" r="4" /><path d="M12 12h9M17 12v3M20 12v2" /></>,
   };
   return <svg className="ui-icon" viewBox="0 0 24 24" aria-hidden="true">{paths[name] || paths.sparkle}</svg>;
 }
@@ -597,18 +678,21 @@ function Tab({ label, icon, active, onClick }: { label: string; icon: string; ac
 function StatCard({ icon, label, value, color }: { icon: string; label: string; value: string; color: string }) { return <article className="stat-card"><span style={{ background: color }}><UiIcon name={icon} /></span><div><b>{value}</b><small>{label}</small></div></article>; }
 function GuideStep({ number, icon, title, text, color }: { number: string; icon: string; title: string; text: string; color: string }) { return <article className="guide-step"><span className="guide-number">{number}</span><div className="guide-icon" style={{ background: color }}><UiIcon name={icon} /></div><h3>{title}</h3><p>{text}</p></article>; }
 
-function AdminPage({ missions, people, uadOptions, busyAction, onCreate, onDelete, onRefresh }: {
+function AdminPage({ missions, people, evidence, uadOptions, busyAction, onCreate, onEdit, onDelete, onRefresh }: {
   missions: Mission[];
   people: PersonProgress[];
+  evidence: AdminEvidence[];
   uadOptions: string[];
   busyAction: string;
   onCreate: (mission: Mission) => Promise<boolean>;
+  onEdit: (mission: Mission, regenerateCode: boolean) => Promise<boolean>;
   onDelete: (mission: Mission) => Promise<boolean>;
   onRefresh: () => Promise<void>;
 }) {
-  const [tab, setTab] = useState<"overview" | "missions">("overview");
+  const [tab, setTab] = useState<"overview" | "missions" | "evidence">("overview");
   const [audience, setAudience] = useState("Todas las UAD");
   const [deleteTarget, setDeleteTarget] = useState<Mission | null>(null);
+  const [editTarget, setEditTarget] = useState<Mission | null>(null);
   const average = people.length ? Math.round(people.reduce((sum, p) => sum + (p.total ? (p.completed / p.total) * 100 : 0), 0) / people.length) : 0;
   const leader = people.slice().sort((a, b) => b.completed - a.completed || b.points - a.points)[0];
   const totalCompleted = people.reduce((sum, p) => sum + p.completed, 0);
@@ -622,9 +706,18 @@ function AdminPage({ missions, people, uadOptions, busyAction, onCreate, onDelet
     const success = await onCreate({
       id: Date.now(), station: station.name, icon: station.icon, color: station.color,
       title: String(form.get("title")), description: String(form.get("description")),
-      points: Number(form.get("points")), audience, duration: String(form.get("duration")) || "8 min",
+      points: Number(form.get("points")), audience, duration: String(form.get("duration")) || "8 min", evidenceRequired: form.get("evidenceRequired") === "on",
     });
     if (success) { element.reset(); setAudience("Todas las UAD"); }
+  }
+
+  async function editMission(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editTarget) return;
+    const form = new FormData(event.currentTarget);
+    const station = stations.find((item) => item.name === String(form.get("station"))) || stations[0];
+    const updated: Mission = { ...editTarget, station: station.name, icon: station.icon, color: station.color, title: String(form.get("title")), description: String(form.get("description")), duration: String(form.get("duration")) || "8 min", points: Number(form.get("points")), audience: String(form.get("audience")), evidenceRequired: form.get("evidenceRequired") === "on" };
+    if (await onEdit(updated, form.get("regenerateCode") === "on")) setEditTarget(null);
   }
 
   async function confirmDelete() {
@@ -643,16 +736,18 @@ function AdminPage({ missions, people, uadOptions, busyAction, onCreate, onDelet
 
   return <div className="page-content admin-page">
     <div className="admin-title"><div><p className="step-label">CENTRO DE CONTROL</p><h2>Administración del festival</h2><p>Gestiona misiones y acompaña el avance de los colaboradores.</p></div><div className="admin-badge"><UiIcon name="settings" /> Modo administrador</div></div>
-    <div className="admin-tabs"><button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>Resumen y progreso</button><button className={tab === "missions" ? "active" : ""} onClick={() => setTab("missions")}>Gestionar misiones</button></div>
+    <div className="admin-tabs"><button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>Resumen y progreso</button><button className={tab === "missions" ? "active" : ""} onClick={() => setTab("missions")}>Gestionar misiones</button><button className={tab === "evidence" ? "active" : ""} onClick={() => setTab("evidence")}>Evidencias <span>{evidence.length}</span></button></div>
 
     {tab === "overview" ? <>
       <div className="admin-stats"><StatCard icon="users" label="Colaboradores" value={String(people.length)} color="#9d5cff" /><StatCard icon="check" label="Misiones completadas" value={String(totalCompleted)} color="#12cfe0" /><StatCard icon="trend" label="Avance promedio" value={`${average}%`} color="#43d17d" /><StatCard icon="sparkle" label="Puntos entregados" value={totalPoints >= 1000 ? `${(totalPoints / 1000).toFixed(1)}K` : String(totalPoints)} color="#ffb703" /></div>
       {leader && <div className="leader-card"><span className="leader-avatar"><UiIcon name="trophy" /></span><div><p className="step-label">LÍDER DEL RECORRIDO</p><h3>{leader.name}</h3><p>{leader.uad} · {leader.completed} misiones completadas</p></div><b>{leader.points}<small>puntos</small></b></div>}
       <div className="people-table"><div className="table-title"><h3>Progreso de colaboradores</h3><div className="table-actions"><button onClick={onRefresh} disabled={busyAction === "admin-refresh"}>{busyAction === "admin-refresh" ? "Actualizando..." : "Actualizar ↻"}</button><button onClick={downloadReport}>Descargar CSV ↓</button></div></div><div className="table-head"><span>Colaborador</span><span>UAD</span><span>Progreso</span><span>Puntos</span></div>{people.map((p) => { const pct = p.total ? Math.round((p.completed / p.total) * 100) : 0; return <div className="table-row" key={`${p.name}-${p.uad}`}><span><i>{p.name.charAt(0)}</i><b>{p.name}</b></span><span>{p.uad}</span><span><div className="mini-progress"><i style={{ width: `${pct}%` }} /></div><b>{pct}%</b></span><span className="point-value">{p.points}</span></div>; })}</div>
-    </> : <div className="mission-admin-grid">
-      <form className="create-mission-card" onSubmit={createMission}><p className="step-label">NUEVA ACTIVIDAD</p><h3>Crear una misión</h3><label>Nombre de la misión<input name="title" maxLength={120} placeholder="Ej. Ruta de la confianza" required /></label><label>Estación<select name="station">{stations.map((s) => <option key={s.name}>{s.name}</option>)}</select></label><label>Descripción<textarea name="description" maxLength={700} placeholder="Explica en qué consiste el reto..." required /></label><div className="field-row"><label>Duración<input name="duration" maxLength={30} placeholder="8 min" /></label><label>Puntos<input name="points" type="number" defaultValue="100" min="10" max="1000" required /></label></div><label>¿A quién se asigna?<select value={audience === "Todas las UAD" ? "all" : "uad"} onChange={(e) => setAudience(e.target.value === "all" ? "Todas las UAD" : (uadOptions[0] || "Todas las UAD"))}><option value="all">A todas las UAD</option><option value="uad">A una UAD específica</option></select></label>{audience !== "Todas las UAD" && <label>UAD asignada<select value={audience} onChange={(e) => setAudience(e.target.value)}>{uadOptions.map((uad) => <option key={uad}>{uad}</option>)}</select></label>}<button className="primary-button" type="submit" disabled={busyAction === "create-mission"}>{busyAction === "create-mission" ? <><LoadingDot /> Publicando...</> : <>Publicar misión <UiIcon name="arrow" /></>}</button></form>
-      <div className="active-missions"><div className="section-heading"><div><p className="step-label">PUBLICADAS</p><h3>Misiones activas</h3></div><span>{missions.length}</span></div>{missions.slice().reverse().map((m) => <article key={m.id}><span style={{ background: m.color }}><StationIcon station={m.station} /></span><div><b>{m.title}</b><small>{m.station} · {m.audience}</small></div><button className="delete-mission" aria-label={`Eliminar ${m.title}`} title="Eliminar misión" onClick={() => setDeleteTarget(m)}><UiIcon name="trash" /></button></article>)}</div>
-    </div>}
+    </> : tab === "missions" ? <div className="mission-admin-grid">
+      <form className="create-mission-card" onSubmit={createMission}><p className="step-label">NUEVA ACTIVIDAD</p><h3>Crear una misión</h3><label>Nombre de la misión<input name="title" maxLength={120} placeholder="Ej. Ruta de la confianza" required /></label><label>Estación<select name="station">{stations.map((s) => <option key={s.name}>{s.name}</option>)}</select></label><label>Descripción<textarea name="description" maxLength={700} placeholder="Explica en qué consiste el reto..." required /></label><div className="field-row"><label>Duración<input name="duration" maxLength={30} placeholder="8 min" /></label><label>Puntos<input name="points" type="number" defaultValue="100" min="10" max="1000" required /></label></div><label>¿A quién se asigna?<select value={audience === "Todas las UAD" ? "all" : "uad"} onChange={(e) => setAudience(e.target.value === "all" ? "Todas las UAD" : (uadOptions[0] || "Todas las UAD"))}><option value="all">A todas las UAD</option><option value="uad">A una UAD específica</option></select></label>{audience !== "Todas las UAD" && <label>UAD asignada<select value={audience} onChange={(e) => setAudience(e.target.value)}>{uadOptions.map((uad) => <option key={uad}>{uad}</option>)}</select></label>}<label className="toggle-field"><input type="checkbox" name="evidenceRequired" /><span><b>Exigir evidencia</b><small>Foto o video para sellar</small></span></label><div className="generated-code-note"><UiIcon name="key" /><span><b>Código automático</b><small>Se genera al publicar y solo lo ve el administrador.</small></span></div><button className="primary-button" type="submit" disabled={busyAction === "create-mission"}>{busyAction === "create-mission" ? <><LoadingDot /> Publicando...</> : <>Publicar misión <UiIcon name="arrow" /></>}</button></form>
+      <div className="active-missions"><div className="section-heading"><div><p className="step-label">PUBLICADAS</p><h3>Misiones activas</h3></div><span>{missions.length}</span></div>{missions.slice().reverse().map((m) => <article key={m.id}><span style={{ background: m.color }}><StationIcon station={m.station} /></span><div><b>{m.title}</b><small>{m.station} · {m.audience}</small><code><UiIcon name="key" /> {m.sealCode || "Cargando…"}</code></div><div className="mission-admin-actions"><button aria-label={`Editar ${m.title}`} title="Editar misión" onClick={() => setEditTarget(m)}><UiIcon name="edit" /></button><button className="delete-mission" aria-label={`Eliminar ${m.title}`} title="Eliminar misión" onClick={() => setDeleteTarget(m)}><UiIcon name="trash" /></button></div></article>)}</div>
+    </div> : <div className="evidence-admin"><div className="section-heading"><div><p className="step-label">VALIDACIÓN VISUAL</p><h3>Evidencias recientes</h3><p>Los archivos se consultan solo al abrir Administración.</p></div><button className="secondary-button" onClick={onRefresh}>Actualizar ↻</button></div>{evidence.length ? <div className="evidence-grid">{evidence.map((item) => <article key={item.id}><span className="evidence-type"><UiIcon name="camera" /></span><div><b>{item.userName}</b><small>{item.missionTitle}</small><p>{item.fileName} · {(item.size / 1024 / 1024).toFixed(1)} MB</p></div><a href={item.url} target="_blank" rel="noreferrer">Revisar ↗</a></article>)}</div> : <div className="empty-state"><span><UiIcon name="camera" /></span><h3>Aún no hay evidencias</h3><p>Las fotos y videos aparecerán aquí cuando los participantes validen sus misiones.</p></div>}</div>}
+
+    {editTarget && <div className="admin-confirm-backdrop" role="dialog" aria-modal="true" aria-label="Editar misión"><form className="admin-edit-modal" onSubmit={editMission}><button className="close-button" type="button" onClick={() => setEditTarget(null)}>×</button><p className="step-label">EDITAR MISIÓN</p><h3>{editTarget.title}</h3><label>Nombre<input name="title" defaultValue={editTarget.title} maxLength={120} required /></label><label>Estación<select name="station" defaultValue={editTarget.station}>{stations.map((s) => <option key={s.name}>{s.name}</option>)}</select></label><label>Descripción<textarea name="description" defaultValue={editTarget.description} maxLength={700} required /></label><div className="field-row"><label>Duración<input name="duration" defaultValue={editTarget.duration} maxLength={30} /></label><label>Puntos<input name="points" type="number" defaultValue={editTarget.points} min="10" max="1000" required /></label></div><label>Audiencia<select name="audience" defaultValue={editTarget.audience}><option>Todas las UAD</option>{uadOptions.map((uad) => <option key={uad}>{uad}</option>)}</select></label><label className="toggle-field"><input type="checkbox" name="evidenceRequired" defaultChecked={editTarget.evidenceRequired} /><span><b>Exigir evidencia</b><small>Foto o video para completar</small></span></label><label className="toggle-field warning"><input type="checkbox" name="regenerateCode" /><span><b>Generar un código nuevo</b><small>El código anterior dejará de funcionar</small></span></label><button className="primary-button" type="submit" disabled={busyAction === `edit-${editTarget.id}`}>{busyAction === `edit-${editTarget.id}` ? <><LoadingDot /> Guardando...</> : <>Guardar cambios <UiIcon name="check" /></>}</button></form></div>}
 
     {deleteTarget && <div className="admin-confirm-backdrop" role="dialog" aria-modal="true" aria-label="Confirmar eliminación"><div className="admin-confirm"><span><UiIcon name="trash" /></span><h3>¿Eliminar esta misión?</h3><p><b>{deleteTarget.title}</b> dejará de aparecer para los usuarios. El historial ya registrado se conservará.</p><div><button className="secondary-button" onClick={() => setDeleteTarget(null)} disabled={busyAction.startsWith("delete-")}>Cancelar</button><button className="danger-button" onClick={confirmDelete} disabled={busyAction === `delete-${deleteTarget.id}`}>{busyAction === `delete-${deleteTarget.id}` ? <><LoadingDot /> Eliminando...</> : <>Eliminar misión <UiIcon name="trash" /></>}</button></div></div></div>}
   </div>;

@@ -6,16 +6,19 @@ Versión completa de la aplicación web para GitHub Pages y Google Apps Script. 
 - Registro e inicio de sesión con cédula y contraseña.
 - Tablero personal, progreso, puntos, sellos, historial y logro final.
 - Misiones para todas las UAD o para una UAD específica.
-- Panel administrador con creación, eliminación segura y seguimiento de misiones.
-- Creador de avatares con seis tonos de piel, siete colores de cabello, siete estilos de cabello, ocho colores de camiseta y ocho accesorios.
+- Panel administrador con creación, edición, eliminación segura, códigos únicos y seguimiento de misiones.
+- Creador de avatares 3D con seis tonos de piel, siete colores y estilos de cabello, ocho colores de camiseta, hasta tres accesorios simultáneos y colores independientes.
 - Pestaña Bonus con sopa de letras, sudoku seguro y tiro al blanco.
-- **Ruta Viva del Festival** con seis mundos, avance por estación y avatar viajero.
+- **Ruta Viva del Festival 3D** con mundos flotantes, nave espacial, avatar visible en la cabina y acceso filtrado a las misiones de cada estación.
 - Colección automática de seis insignias, sin agregar columnas al archivo de Google Sheets.
-- Tarjeta final personalizada descargable en PNG, generada directamente en el dispositivo.
+- Certificado holográfico personalizado en PNG, con avatar 3D y logos integrados sin fondo, generado directamente en el dispositivo.
+- Sellado protegido por código único de misión y carga opcional u obligatoria de fotos o videos como evidencia.
 - Portada dinámica con profundidad, brillo, constelaciones y ruta de vuelo.
 - Reporte administrativo CSV y actualización manual de estadísticas.
 - Diseño adaptable para computadores, tabletas y teléfonos.
 - Carga diferida de minijuegos, caché por usuario, restauración de sesión, reintentos progresivos e identificadores de operación para reducir cargas y duplicados.
+- Inicio de sesión optimizado por búsqueda directa, reutilización segura de sesión y restauración instantánea desde el dispositivo.
+- Interacciones optimistas para misiones, avatar y bonus: la pantalla responde primero y confirma el guardado en segundo plano.
 
 La eliminación administrativa desactiva la misión y conserva los registros históricos de los participantes.
 
@@ -33,7 +36,7 @@ La eliminación administrativa desactiva la misión y conserva los registros his
 2. Abra **Extensiones → Apps Script**.
 3. Reemplace el contenido de `Code.gs` por el archivo `apps-script/Code.gs` de este proyecto.
 4. Guarde y ejecute una vez la función `setupPasaporteSeguro`. Autorice el acceso solicitado.
-5. Regrese a la hoja. Se habrán creado las pestañas `Usuarios`, `Misiones`, `Progreso`, `Sesiones`, `Catalogos` y `Bonus`.
+5. Regrese a la hoja. Se habrán creado las pestañas `Usuarios`, `Misiones`, `Progreso`, `Sesiones`, `Catalogos`, `Bonus` y `Evidencias`.
 6. En `Catalogos`, reemplace los cargos y UAD de ejemplo por sus datos reales. Conserve `Tipo` como `CARGO` o `UAD` y `Activo` como `TRUE`.
 
 ## 2. Crear el primer administrador
@@ -62,9 +65,13 @@ Ejecute una vez `crearAdministradorInicial`. Cuando confirme que el administrado
 
 ### Actualización desde una versión anterior
 
-Esta actualización no elimina ni renombra hojas, columnas o registros. Puede reemplazar `Code.gs`, guardar y ejecutar nuevamente `setupPasaporteSeguro`. La función conserva las hojas existentes y crea únicamente cualquier hoja faltante.
+Esta actualización no elimina ni renombra hojas, columnas o registros. Reemplace `Code.gs`, guarde y ejecute nuevamente `setupPasaporteSeguro` **una sola vez**. La función conserva las hojas existentes, agrega las columnas faltantes, crea `Evidencias` y genera un código único para cada misión existente.
+
+La primera ejecución que reciba una evidencia solicitará permiso para Google Drive. Los archivos se guardan en la carpeta privada `PASAPORTE_SEGURO_EVIDENCIAS`; la hoja conserva únicamente sus metadatos y enlaces.
 
 Las insignias y la tarjeta final se calculan usando `Misiones`, `Progreso` y `Bonus`; no requieren una pestaña adicional.
+
+La Ruta Viva 3D también usa las misiones existentes: no crea hojas, columnas ni consultas adicionales. El viaje de la nave se ejecuta localmente y al llegar solo aplica el filtro de la estación seleccionada.
 
 ## 4. Publicar en GitHub Pages
 
@@ -100,28 +107,42 @@ Cambie únicamente `true` por `false` si necesita desactivar temporalmente una c
 
 ## Optimización y concurrencia
 
+- El login consulta únicamente la columna y la fila del usuario solicitado; no vuelve a leer ni guardar en caché toda la hoja `Usuarios`.
+- La estructura de las siete hojas se valida durante `setupPasaporteSeguro`, no en cada clic del participante.
+- Las sesiones válidas se reutilizan y su caché se conserva durante la actividad para evitar recorrer `Sesiones` repetidamente.
+- El último tablero válido se muestra inmediatamente desde el dispositivo y se confirma en segundo plano con Apps Script.
+- Los catálogos se solicitan solo cuando una persona abre el formulario de registro; no ralentizan el inicio de sesión.
+- El panel administrativo calcula estadísticas únicamente al abrirlo o actualizarlo manualmente; no bloquea el ingreso del administrador.
 - Catálogos y misiones se comparten mediante caché.
-- La primera lectura de actividad prepara cachés individuales para los demás participantes.
+- El progreso y los bonus se buscan por usuario y solo se almacena en caché la actividad solicitada.
 - Las estadísticas administrativas se reutilizan durante 30 segundos y se actualizan solo cuando el administrador lo solicita.
+- Las evidencias no se descargan durante el login ni la navegación normal; el administrador consulta solo los 100 registros más recientes al abrir su panel.
+- Las fotos se comprimen en el dispositivo hasta 1600 px antes del envío. Fotos y videos tienen un límite de 7 MB por evidencia.
+- El código se valida antes de guardar el archivo y una misión completada no vuelve a duplicar evidencia durante un reintento.
 - Las escrituras repetidas llevan un identificador temporal para evitar duplicados durante reintentos.
 - Las actualizaciones de filas se realizan en bloque.
 - Los minijuegos cargan su código únicamente al abrir la pestaña Bonus.
+- Los tiempos de espera y reintentos son diferentes para login, lecturas y escrituras, evitando esperas acumuladas excesivas.
 
 Estas medidas reducen notablemente las consultas, pero Google Apps Script y Google Sheets conservan cuotas propias. Antes del evento se recomienda hacer una prueba de carga progresiva en una copia de la hoja y del despliegue, nunca directamente sobre los datos reales.
 
 ## Estructura de datos
 
 - `Usuarios`: perfiles, UAD, rol y credenciales cifradas.
-- `Misiones`: actividades, estación, puntos y audiencia (`Todas las UAD` o una UAD específica).
+- `Misiones`: actividades, estación, puntos, audiencia, código único y requisito de evidencia.
 - `Progreso`: misiones iniciadas y completadas con fechas.
 - `Sesiones`: tokens temporales de acceso.
 - `Catalogos`: listas editables de cargos y UAD.
 - `Bonus`: resultados y puntajes de los minijuegos.
+- `Evidencias`: metadatos y enlaces privados de fotos o videos; el archivo binario se conserva en Google Drive.
 
 ## Verificación después de publicar
 
 1. Abra **Actions** y espere que `Desplegar Pasaporte Seguro` aparezca en verde.
 2. Abra el sitio publicado y actualice con `Ctrl + F5`.
 3. Pruebe registro, inicio de sesión, cambio de avatar, una misión y un minijuego.
-4. Revise la Ruta Viva, la pestaña Insignias y la descarga de la tarjeta final.
-5. Ingrese como administrador y confirme que puede crear, eliminar y actualizar misiones, además de descargar el reporte CSV.
+4. En la Ruta Viva 3D seleccione una estación, espere el viaje de la nave y confirme que se muestran únicamente las misiones de ese destino.
+5. Ingrese como administrador y confirme que puede crear y editar una misión, ver su código, exigir evidencia y revisar la pestaña Evidencias.
+6. Inicie esa misión con un usuario, pruebe un código incorrecto y luego selle con el código correcto y una foto o video.
+
+Después de reemplazar `apps-script/Code.gs`, ejecute `setupPasaporteSeguro` una vez y cree una **nueva versión** de la implementación web. La migración conserva los registros existentes.

@@ -10,15 +10,17 @@ const SHEETS = {
   SESSIONS: "Sesiones",
   CATALOGS: "Catalogos",
   BONUS: "Bonus",
+  EVIDENCE: "Evidencias",
 };
 
 const HEADERS = {
   Usuarios: ["Id", "Nombre", "Cedula", "Telefono", "Correo", "Cargo", "UAD", "Avatar", "Rol", "PasswordSalt", "PasswordHash", "Activo", "CreadoEn"],
-  Misiones: ["Id", "Estacion", "Icono", "Color", "Titulo", "Descripcion", "Puntos", "Audiencia", "Duracion", "Activa", "CreadaEn"],
+  Misiones: ["Id", "Estacion", "Icono", "Color", "Titulo", "Descripcion", "Puntos", "Audiencia", "Duracion", "Activa", "CreadaEn", "CreadaPor", "CodigoSello", "EvidenciaObligatoria", "EditadaEn"],
   Progreso: ["Id", "UsuarioId", "MisionId", "Estado", "IniciadaEn", "CompletadaEn"],
   Sesiones: ["Token", "UsuarioId", "ExpiraEn", "CreadaEn"],
   Catalogos: ["Tipo", "Valor", "Activo"],
   Bonus: ["Id", "UsuarioId", "JuegoId", "Puntaje", "CompletadoEn"],
+  Evidencias: ["Id", "UsuarioId", "MisionId", "ArchivoId", "NombreArchivo", "TipoMime", "TamanoBytes", "Url", "Estado", "CreadoEn"],
 };
 
 const CACHE_KEYS = {
@@ -27,6 +29,7 @@ const CACHE_KEYS = {
   MISSIONS_ALL: "pasaporte:missions:all:v1",
   ADMIN_DASHBOARD: "pasaporte:admin-dashboard:v1",
   SESSION_CLEANUP: "pasaporte:session-cleanup:v1",
+  ADMIN_EVIDENCE: "pasaporte:admin-evidence:v1",
 };
 
 const CACHE_TTL = {
@@ -37,7 +40,7 @@ const CACHE_TTL = {
   ACTIVITY: 600,
 };
 
-const WRITE_ACTIONS = ["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "adminCreateMission", "adminDeleteMission"];
+const WRITE_ACTIONS = ["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "adminCreateMission", "adminEditMission", "adminDeleteMission"];
 
 function doGet() {
   return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready" } });
@@ -64,6 +67,7 @@ function doPost(event) {
     else if (action === "updateAvatar") data = updateAvatarApi_(request);
     else if (action === "completeBonus") data = completeBonusApi_(request);
     else if (action === "adminCreateMission") data = adminCreateMissionApi_(request);
+    else if (action === "adminEditMission") data = adminEditMissionApi_(request);
     else if (action === "adminDeleteMission") data = adminDeleteMissionApi_(request);
     else if (action === "adminDashboard") data = adminDashboardApi_(request);
     else throw new Error("Acción no reconocida.");
@@ -79,7 +83,8 @@ function setupPasaporteSeguro() {
   ensureStructure_();
   seedCatalogs_();
   seedMissions_();
-  return "Estructura creada. Ahora edite los catálogos y configure el administrador.";
+  seedMissionCodes_();
+  return "Estructura actualizada sin borrar datos. Las misiones ya tienen códigos únicos y la hoja de evidencias está lista.";
 }
 
 /**
@@ -203,13 +208,25 @@ function startMissionApi_(request) {
 function completeMissionApi_(request) {
   const user = requireSession_(request.token);
   const mission = allowedMission_(user, request.missionId);
+  const suppliedCode = normalizeMissionCode_(request.sealCode);
+  const expectedCode = normalizeMissionCode_(mission.CodigoSello);
+  if (!expectedCode) throw new Error("Esta misión aún no tiene código. Pide al administrador ejecutar setupPasaporteSeguro().");
+  enforceMissionCodeRate_(user.Id, mission.Id, suppliedCode === expectedCode);
+  if (suppliedCode !== expectedCode) throw new Error("El código de la misión no es correcto.");
+  const current = progressForUser_(user.Id).find(function (row) { return String(row.MisionId) === String(mission.Id) && row.Estado === "COMPLETADA"; });
+  if (current) return { missionId: Number(mission.Id), status: "COMPLETADA", completedAt: new Date(current.CompletadaEn || new Date()).toISOString(), repeated: true };
+  if (truthy_(mission.EvidenciaObligatoria) && !request.evidence) throw new Error("Esta misión requiere una foto o un video como evidencia.");
+  if (request.evidence) saveEvidence_(user, mission, request.evidence);
   upsertProgress_(user.Id, mission.Id, "COMPLETADA");
   return { missionId: Number(mission.Id), status: "COMPLETADA", completedAt: new Date().toISOString() };
 }
 
 function updateAvatarApi_(request) {
   const user = requireSession_(request.token);
-  if (!/^avatar:v1:[0-5]:[0-6]:[0-6]:[0-7]:[0-7]$/.test(String(request.avatar))) throw new Error("Avatar no permitido.");
+  const avatarValue = String(request.avatar || "");
+  const validV1 = /^avatar:v1:[0-5]:[0-6]:[0-6]:[0-7]:[0-7]$/.test(avatarValue);
+  const validV2 = /^avatar:v2:[0-5]:[0-6]:[0-6]:[0-7]:(?:[1-7]-[0-7](?:,[1-7]-[0-7]){0,2})?$/.test(avatarValue);
+  if (!validV1 && !validV2) throw new Error("Avatar no permitido.");
   updateObjectRow_(SHEETS.USERS, user._row, { Avatar: String(request.avatar) });
   user.Avatar = String(request.avatar);
   cacheUser_(user);
@@ -238,23 +255,44 @@ function completeBonusApi_(request) {
 
 function adminCreateMissionApi_(request) {
   const admin = requireAdmin_(request.token);
-  const mission = request.mission || {};
-  const title = limitedText_(mission.title, 120, "El nombre de la misión es obligatorio.");
-  const station = limitedText_(mission.station, 80, "La estación es obligatoria.");
-  const description = limitedText_(mission.description, 700, "La descripción es obligatoria.");
-  const audience = limitedText_(mission.audience || "Todas las UAD", 120, "La audiencia es obligatoria.");
-  const duration = limitedText_(mission.duration || "8 min", 30, "La duración es obligatoria.");
-  const allowedStations = ["Estación Diversidad", "Estación Felicidad", "Estación Seguridad", "Estación Salud", "Estación Amor Propio", "Estación Ambiental"];
-  if (allowedStations.indexOf(station) < 0) throw new Error("La estación seleccionada no es válida.");
-  const id = Date.now();
-  appendObject_(SHEETS.MISSIONS, {
-    Id: id, Estacion: station, Icono: mission.icon || "✦", Color: mission.color || "#12cfe0",
-    Titulo: title, Descripcion: description, Puntos: Math.max(10, Math.min(1000, Number(mission.points) || 100)),
-    Audiencia: audience, Duracion: duration, Activa: true,
-    CreadaEn: new Date(), CreadaPor: admin.Id,
+  const mission = validateMissionInput_(request.mission || {});
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) throw new Error("Hay otra misión guardándose. Intenta nuevamente en un momento.");
+  let id;
+  let sealCode;
+  try {
+    id = Date.now();
+    sealCode = generateUniqueMissionCode_();
+    appendObject_(SHEETS.MISSIONS, {
+      Id: id, Estacion: mission.station, Icono: mission.icon, Color: mission.color,
+      Titulo: mission.title, Descripcion: mission.description, Puntos: mission.points,
+      Audiencia: mission.audience, Duracion: mission.duration, Activa: true,
+      CreadaEn: new Date(), CreadaPor: admin.Id, CodigoSello: sealCode,
+      EvidenciaObligatoria: mission.evidenceRequired, EditadaEn: "",
+    });
+  } finally { lock.releaseLock(); }
+  invalidateMissionCaches_();
+  return { id: id, sealCode: sealCode };
+}
+
+function adminEditMissionApi_(request) {
+  requireAdmin_(request.token);
+  const input = validateMissionInput_(request.mission || {});
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) throw new Error("Hay otra misión guardándose. Intenta nuevamente en un momento.");
+  try {
+  const current = sheetObjects_(SHEETS.MISSIONS).find(function (row) { return String(row.Id) === String(request.mission && request.mission.id) && truthy_(row.Activa); });
+  if (!current) throw new Error("La misión ya no existe o fue eliminada.");
+  const sealCode = truthy_(request.regenerateCode) ? generateUniqueMissionCode_() : normalizeMissionCode_(current.CodigoSello) || generateUniqueMissionCode_();
+  updateObjectRow_(SHEETS.MISSIONS, current._row, {
+    Estacion: input.station, Icono: input.icon, Color: input.color, Titulo: input.title,
+    Descripcion: input.description, Puntos: input.points, Audiencia: input.audience,
+    Duracion: input.duration, EvidenciaObligatoria: input.evidenceRequired,
+    CodigoSello: sealCode, EditadaEn: new Date(),
   });
   invalidateMissionCaches_();
-  return { id: id };
+  return { mission: { id: Number(current.Id), station: input.station, icon: input.icon, color: input.color, title: input.title, description: input.description, points: input.points, audience: input.audience, duration: input.duration, evidenceRequired: input.evidenceRequired, sealCode: sealCode } };
+  } finally { lock.releaseLock(); }
 }
 
 function adminDeleteMissionApi_(request) {
@@ -272,7 +310,7 @@ function adminDeleteMissionApi_(request) {
 
 function adminDashboardApi_(request) {
   requireAdmin_(request.token);
-  return { people: buildAdminPeople_() };
+  return { people: buildAdminPeople_(), missions: activeMissions_().map(adminMission_), evidence: buildAdminEvidence_() };
 }
 
 function userBundle_(user) {
@@ -324,6 +362,81 @@ function buildAdminPeople_() {
   });
   cachePut_(CACHE_KEYS.ADMIN_DASHBOARD, people, 30);
   return people;
+}
+
+function buildAdminEvidence_() {
+  const cached = cacheGet_(CACHE_KEYS.ADMIN_EVIDENCE);
+  if (cached) return cached;
+  const users = {};
+  const missions = {};
+  sheetObjects_(SHEETS.USERS).forEach(function (row) { users[String(row.Id)] = String(row.Nombre || "Participante"); });
+  allMissions_().forEach(function (row) { missions[String(row.Id)] = String(row.Titulo || "Misión"); });
+  const rows = sheetObjects_(SHEETS.EVIDENCE).sort(function (a, b) { return new Date(b.CreadoEn).getTime() - new Date(a.CreadoEn).getTime(); }).slice(0, 100);
+  const result = rows.map(function (row) {
+    return { id: String(row.Id), userName: users[String(row.UsuarioId)] || "Participante", missionTitle: missions[String(row.MisionId)] || "Misión", fileName: String(row.NombreArchivo), mime: String(row.TipoMime), size: Number(row.TamanoBytes) || 0, url: String(row.Url), status: String(row.Estado || "RECIBIDA"), createdAt: row.CreadoEn ? new Date(row.CreadoEn).toISOString() : "" };
+  });
+  cachePut_(CACHE_KEYS.ADMIN_EVIDENCE, result, 30);
+  return result;
+}
+
+function validateMissionInput_(mission) {
+  const title = limitedText_(mission.title, 120, "El nombre de la misión es obligatorio.");
+  const station = limitedText_(mission.station, 80, "La estación es obligatoria.");
+  const description = limitedText_(mission.description, 700, "La descripción es obligatoria.");
+  const audience = limitedText_(mission.audience || "Todas las UAD", 120, "La audiencia es obligatoria.");
+  const duration = limitedText_(mission.duration || "8 min", 30, "La duración es obligatoria.");
+  const stationOptions = {
+    "Estación Diversidad": ["◉", "#9d5cff"], "Estación Felicidad": ["♡", "#ffb703"],
+    "Estación Seguridad": ["◇", "#12cfe0"], "Estación Salud": ["+", "#43d17d"],
+    "Estación Amor Propio": ["✦", "#ff5c9b"], "Estación Ambiental": ["♧", "#8bd33f"],
+  };
+  if (!stationOptions[station]) throw new Error("La estación seleccionada no es válida.");
+  return { title: title, station: station, description: description, audience: audience, duration: duration, points: Math.max(10, Math.min(1000, Number(mission.points) || 100)), icon: stationOptions[station][0], color: stationOptions[station][1], evidenceRequired: truthy_(mission.evidenceRequired) };
+}
+
+function generateUniqueMissionCode_() {
+  const used = {};
+  sheetObjects_(SHEETS.MISSIONS).forEach(function (row) { const code = normalizeMissionCode_(row.CodigoSello); if (code) used[code] = true; });
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    let code = "";
+    for (let index = 0; index < 6; index += 1) code += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+    if (!used[code]) return code;
+  }
+  return Utilities.getUuid().replace(/-/g, "").slice(0, 8).toUpperCase();
+}
+
+function normalizeMissionCode_(value) { return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8); }
+
+function saveEvidence_(user, mission, input) {
+  const mime = String(input.mime || "").toLowerCase();
+  if (mime.indexOf("image/") !== 0 && mime.indexOf("video/") !== 0) throw new Error("La evidencia debe ser una foto o un video.");
+  const encoded = String(input.data || "");
+  if (!encoded || encoded.length > 10 * 1024 * 1024) throw new Error("La evidencia supera el tamaño permitido.");
+  const bytes = Utilities.base64Decode(encoded);
+  if (bytes.length > 7 * 1024 * 1024) throw new Error("La evidencia supera 7 MB.");
+  const name = safeEvidenceName_(input.name || (mime.indexOf("image/") === 0 ? "evidencia.jpg" : "evidencia.mp4"));
+  const folder = evidenceFolder_();
+  const file = folder.createFile(Utilities.newBlob(bytes, mime, String(mission.Id) + "-" + String(user.Id).slice(0, 8) + "-" + name));
+  appendObject_(SHEETS.EVIDENCE, { Id: Utilities.getUuid(), UsuarioId: user.Id, MisionId: mission.Id, ArchivoId: file.getId(), NombreArchivo: name, TipoMime: mime, TamanoBytes: bytes.length, Url: file.getUrl(), Estado: "RECIBIDA", CreadoEn: new Date() });
+  CacheService.getScriptCache().remove(CACHE_KEYS.ADMIN_EVIDENCE);
+  return file.getId();
+}
+
+function evidenceFolder_() {
+  const props = PropertiesService.getScriptProperties();
+  const existingId = props.getProperty("EVIDENCE_FOLDER_ID");
+  if (existingId) {
+    try { return DriveApp.getFolderById(existingId); } catch (error) { props.deleteProperty("EVIDENCE_FOLDER_ID"); }
+  }
+  const folder = DriveApp.createFolder("PASAPORTE_SEGURO_EVIDENCIAS");
+  props.setProperty("EVIDENCE_FOLDER_ID", folder.getId());
+  return folder;
+}
+
+function safeEvidenceName_(value) {
+  const safe = String(value || "evidencia").replace(/[^0-9A-Za-z._ -]/g, "_").replace(/\s+/g, "-").slice(0, 120);
+  return safe || "evidencia";
 }
 
 function allowedMissions_(user) {
@@ -438,7 +551,13 @@ function publicUser_(user) {
 }
 
 function publicMission_(m) {
-  return { id: Number(m.Id), station: String(m.Estacion), icon: String(m.Icono), color: String(m.Color), title: String(m.Titulo), description: String(m.Descripcion), points: Number(m.Puntos), audience: String(m.Audiencia), duration: String(m.Duracion) };
+  return { id: Number(m.Id), station: String(m.Estacion), icon: String(m.Icono), color: String(m.Color), title: String(m.Titulo), description: String(m.Descripcion), points: Number(m.Puntos), audience: String(m.Audiencia), duration: String(m.Duracion), evidenceRequired: truthy_(m.EvidenciaObligatoria) };
+}
+
+function adminMission_(m) {
+  const mission = publicMission_(m);
+  mission.sealCode = normalizeMissionCode_(m.CodigoSello);
+  return mission;
 }
 
 function findUserByCedula_(cedula) {
@@ -483,6 +602,15 @@ function clearLoginRate_(cedula) {
   if (cedula) CacheService.getScriptCache().remove("pasaporte:login-attempt:" + cedula);
 }
 
+function enforceMissionCodeRate_(userId, missionId, valid) {
+  const key = "pasaporte:seal-attempt:" + String(userId) + ":" + String(missionId);
+  const cache = CacheService.getScriptCache();
+  if (valid) { cache.remove(key); return; }
+  const attempts = Number(cache.get(key)) || 0;
+  if (attempts >= 7) throw new Error("Demasiados códigos incorrectos. Espera cinco minutos antes de volver a intentar.");
+  cache.put(key, String(attempts + 1), 300);
+}
+
 let spreadsheetInstance_ = null;
 const executionSheets_ = {};
 const executionHeaders_ = {};
@@ -501,6 +629,11 @@ function ensureSheet_(name, headers) {
   let sheet = ss.getSheetByName(name);
   if (!sheet) sheet = ss.insertSheet(name);
   if (sheet.getLastRow() === 0) sheet.appendRow(headers);
+  else {
+    const existingHeaders = sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getDisplayValues()[0].map(String);
+    const missingHeaders = headers.filter(function (header) { return existingHeaders.indexOf(header) < 0; });
+    if (missingHeaders.length) sheet.getRange(1, existingHeaders.length + 1, 1, missingHeaders.length).setValues([missingHeaders]);
+  }
   sheet.setFrozenRows(1);
   executionSheets_[name] = sheet;
   delete executionHeaders_[name];
@@ -615,7 +748,15 @@ function seedMissions_() {
     [5,"Estación Amor Propio","✦","#ff5c9b","Mi mejor versión","Elige una práctica de autocuidado y completa la actividad guiada de bienestar emocional.",130,"Todas las UAD","9 min"],
     [6,"Estación Ambiental","♧","#8bd33f","Huella consciente","Clasifica correctamente los residuos del desafío y descubre tu eco-acción diaria.",110,"Sede Central","8 min"],
   ];
-  seeds.forEach(function (m) { appendObject_(SHEETS.MISSIONS, { Id:m[0],Estacion:m[1],Icono:m[2],Color:m[3],Titulo:m[4],Descripcion:m[5],Puntos:m[6],Audiencia:m[7],Duracion:m[8],Activa:true,CreadaEn:new Date() }); });
+  seeds.forEach(function (m) { appendObject_(SHEETS.MISSIONS, { Id:m[0],Estacion:m[1],Icono:m[2],Color:m[3],Titulo:m[4],Descripcion:m[5],Puntos:m[6],Audiencia:m[7],Duracion:m[8],Activa:true,CreadaEn:new Date(),CodigoSello:generateUniqueMissionCode_(),EvidenciaObligatoria:false }); });
+  invalidateMissionCaches_();
+}
+
+function seedMissionCodes_() {
+  const missions = sheetObjects_(SHEETS.MISSIONS);
+  missions.forEach(function (mission) {
+    if (!normalizeMissionCode_(mission.CodigoSello)) updateObjectRow_(SHEETS.MISSIONS, mission._row, { CodigoSello: generateUniqueMissionCode_(), EvidenciaObligatoria: truthy_(mission.EvidenciaObligatoria) });
+  });
   invalidateMissionCaches_();
 }
 

@@ -147,10 +147,11 @@ export function BadgeCollection({ badges, onExplore }: { badges: FestivalBadge[]
   </div>;
 }
 
-export function FinalPassportCard({ name, uad, cedula, points, missions, completed, badges, onNotice }: {
+export function FinalPassportCard({ name, uad, cedula, avatar, points, missions, completed, badges, onNotice }: {
   name: string;
   uad: string;
   cedula: string;
+  avatar: string;
   points: number;
   missions: FestivalMission[];
   completed: number[];
@@ -159,6 +160,7 @@ export function FinalPassportCard({ name, uad, cedula, points, missions, complet
 }) {
   const [creating, setCreating] = useState(false);
   const unlocked = badges.filter((badge) => badge.unlocked);
+  const avatarColors = parseAvatarColors(avatar);
 
   async function downloadCard() {
     if (creating) return;
@@ -172,18 +174,19 @@ export function FinalPassportCard({ name, uad, cedula, points, missions, complet
       drawCardBackground(ctx, canvas.width, canvas.height);
       await drawCardLogos(ctx);
       ctx.textAlign = "center";
-      ctx.fillStyle = "#7fe9ef"; ctx.font = "700 28px Arial"; ctx.fillText("PASAPORTE SEGURO · FESTIVAL 2026", 600, 205);
-      ctx.fillStyle = "#ffffff"; ctx.font = "900 74px Arial"; ctx.fillText("¡RUTA COMPLETADA!", 600, 310);
-      ctx.fillStyle = "#b9cae8"; ctx.font = "400 28px Arial"; ctx.fillText("La seguridad y el cuidado se construyen entre todos.", 600, 365);
-      drawCardSeal(ctx, 600, 535);
-      ctx.fillStyle = "#8fa7cc"; ctx.font = "700 22px Arial"; ctx.fillText("ESTE PASAPORTE PERTENECE A", 600, 715);
-      ctx.fillStyle = "#ffffff"; ctx.font = "900 54px Arial"; fitText(ctx, name.toUpperCase(), 600, 780, 940);
-      ctx.fillStyle = "#8fe5e9"; ctx.font = "600 27px Arial"; fitText(ctx, `${uad} · PASAPORTE Nº ${cedula.slice(-6).padStart(6, "0")}`, 600, 830, 980);
+      ctx.fillStyle = "#7fe9ef"; ctx.font = "700 25px Arial"; ctx.fillText("PASAPORTE SEGURO · FESTIVAL 2026", 600, 190);
+      ctx.fillStyle = "#ffffff"; ctx.font = "900 78px Arial"; ctx.fillText("¡RUTA COMPLETADA!", 600, 285);
+      ctx.fillStyle = "#b9cae8"; ctx.font = "400 25px Arial"; ctx.fillText("Una aventura de cuidado, diversidad y bienestar.", 600, 340);
+      drawAvatarMedallion(ctx, avatar, 410, 530, 155);
+      drawCardSeal(ctx, 790, 530);
+      ctx.fillStyle = "#8fa7cc"; ctx.font = "700 21px Arial"; ctx.fillText("CERTIFICADO PARA", 600, 720);
+      ctx.fillStyle = "#ffffff"; ctx.font = "900 55px Arial"; fitText(ctx, name.toUpperCase(), 600, 785, 940);
+      ctx.fillStyle = "#8fe5e9"; ctx.font = "600 26px Arial"; fitText(ctx, `${uad} · PASAPORTE Nº ${cedula.slice(-6).padStart(6, "0")}`, 600, 835, 980);
       const completedMissions = missions.filter((mission) => completed.includes(mission.id));
       drawCardStats(ctx, points, completedMissions.length, unlocked.length);
       drawCardStamps(ctx, completedMissions);
-      ctx.fillStyle = "#91a5c7"; ctx.font = "500 22px Arial"; ctx.fillText("Juntos hacemos del trabajo un lugar más seguro, saludable y feliz.", 600, 1375);
-      ctx.fillStyle = "#5de2e8"; ctx.font = "700 20px Arial"; ctx.fillText("DE MÍ · PARA MÍ", 600, 1425);
+      ctx.fillStyle = "#91a5c7"; ctx.font = "500 21px Arial"; ctx.fillText("Juntos hacemos del trabajo un lugar más seguro, saludable y feliz.", 600, 1370);
+      ctx.fillStyle = "#5de2e8"; ctx.font = "700 19px Arial"; ctx.fillText("DE MÍ · PARA MÍ  ·  EDICIÓN GALÁCTICA", 600, 1422);
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png", .95));
       if (!blob) throw new Error("No fue posible crear la imagen.");
       const link = document.createElement("a");
@@ -197,7 +200,7 @@ export function FinalPassportCard({ name, uad, cedula, points, missions, complet
   }
 
   return <section className="download-card-panel">
-    <div className="card-miniature"><div className="card-mini-stars">✦　·　✦</div><small>PASAPORTE SEGURO</small><span>✓</span><b>{name}</b><i>{points} PUNTOS · {unlocked.length} INSIGNIAS</i></div>
+    <div className="card-miniature creative-certificate"><div className="card-mini-stars">✦　·　✦</div><small>PASAPORTE SEGURO</small><div className="certificate-avatar"><span className="certificate-avatar-face" style={{ "--mini-skin": avatarColors.skin, "--mini-hair": avatarColors.hair, "--mini-shirt": avatarColors.shirt } as React.CSSProperties}><em /><b /><small /></span><i>✓</i></div><b>{name}</b><i>{points} PUNTOS · {unlocked.length} INSIGNIAS</i></div>
     <div><p className="step-label">RECUERDO DEL FESTIVAL</p><h3>Descarga tu tarjeta final</h3><p>Guárdala como imagen o compártela con tu equipo. Se genera en este dispositivo y no hace nuevas consultas al servidor.</p><button className="primary-button" onClick={downloadCard} disabled={creating}>{creating ? "Creando tarjeta..." : "Descargar tarjeta PNG ↓"}</button></div>
   </section>;
 }
@@ -212,7 +215,8 @@ function BadgeIcon({ id }: { id: string }) {
 }
 
 function parseAvatarColors(value: string) {
-  const parts = value.replace("avatar:v1:", "").split(":").map(Number);
+  const normalized = value.startsWith("avatar:v2:") ? value.replace("avatar:v2:", "") : value.replace("avatar:v1:", "");
+  const parts = normalized.split(":").slice(0, 4).map(Number);
   const skins = ["#f8d5c2", "#efbd9f", "#d89572", "#a96848", "#70402f", "#3f251f"];
   const hairs = ["#241914", "#5b3426", "#b66d2e", "#e0b34f", "#7c355d", "#284d78", "#d8d4ce"];
   const shirts = ["#7d4de8", "#08aabb", "#ef4d86", "#f39b17", "#3da868", "#264d87", "#df4949", "#ffffff"];
@@ -223,16 +227,20 @@ function drawCardBackground(ctx: CanvasRenderingContext2D, width: number, height
   const gradient = ctx.createLinearGradient(0, 0, width, height);
   gradient.addColorStop(0, "#06142d"); gradient.addColorStop(.48, "#102d61"); gradient.addColorStop(1, "#07152f");
   ctx.fillStyle = gradient; ctx.fillRect(0, 0, width, height);
+  const glowA = ctx.createRadialGradient(190, 170, 0, 190, 170, 430); glowA.addColorStop(0, "rgba(157,92,255,.48)"); glowA.addColorStop(1, "rgba(157,92,255,0)"); ctx.fillStyle = glowA; ctx.fillRect(0, 0, width, height);
+  const glowB = ctx.createRadialGradient(1040, 760, 0, 1040, 760, 500); glowB.addColorStop(0, "rgba(18,207,224,.3)"); glowB.addColorStop(1, "rgba(18,207,224,0)"); ctx.fillStyle = glowB; ctx.fillRect(0, 0, width, height);
   ctx.strokeStyle = "rgba(93,226,232,.22)"; ctx.lineWidth = 2;
   for (let x = -300; x < width + 300; x += 70) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + 500, height); ctx.stroke(); }
+  for (let i = 0; i < 85; i += 1) { const x = (i * 137) % width; const y = (i * i * 29 + 71) % height; const radius = i % 7 === 0 ? 3 : 1.5; ctx.fillStyle = i % 5 === 0 ? "rgba(255,216,90,.9)" : "rgba(255,255,255,.62)"; ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill(); }
+  roundRect(ctx, 82, 375, 1036, 360, 45); ctx.fillStyle = "rgba(3,13,38,.38)"; ctx.fill(); ctx.strokeStyle = "rgba(255,255,255,.14)"; ctx.lineWidth = 2; ctx.stroke();
   roundRect(ctx, 45, 45, width - 90, height - 90, 38); ctx.strokeStyle = "#5de2e8"; ctx.lineWidth = 4; ctx.stroke();
   roundRect(ctx, 65, 65, width - 130, height - 130, 30); ctx.strokeStyle = "rgba(255,255,255,.18)"; ctx.lineWidth = 2; ctx.stroke();
 }
 
 async function drawCardLogos(ctx: CanvasRenderingContext2D) {
   const [jer, program] = await Promise.all([loadImage("./assets/jer-logo.webp"), loadImage("./assets/de-mi-para-mi.webp")]);
-  if (jer) drawContainedImage(ctx, jer, 86, 80, 170, 82);
-  if (program) drawContainedImage(ctx, program, 872, 82, 240, 75);
+  if (jer) drawContainedImage(ctx, removeLightBackground(jer), 86, 72, 170, 92);
+  if (program) drawContainedImage(ctx, removeLightBackground(program), 872, 72, 240, 88);
 }
 
 function drawCardSeal(ctx: CanvasRenderingContext2D, x: number, y: number) {
@@ -242,6 +250,37 @@ function drawCardSeal(ctx: CanvasRenderingContext2D, x: number, y: number) {
   ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 7; ctx.setLineDash([10, 10]); ctx.beginPath(); ctx.arc(x, y, 115, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
   ctx.fillStyle = "#ffffff"; ctx.textAlign = "center"; ctx.font = "900 92px Arial"; ctx.fillText("✓", x, y + 12);
   ctx.font = "800 24px Arial"; ctx.fillText("PASAPORTE COMPLETO", x, y + 69);
+}
+
+function drawAvatarMedallion(ctx: CanvasRenderingContext2D, value: string, x: number, y: number, radius: number) {
+  const colors = parseAvatarColors(value);
+  ctx.save();
+  const aura = ctx.createRadialGradient(x - 40, y - 55, 20, x, y, radius + 42); aura.addColorStop(0, "rgba(255,255,255,.95)"); aura.addColorStop(.18, "rgba(93,226,232,.78)"); aura.addColorStop(.55, "rgba(157,92,255,.45)"); aura.addColorStop(1, "rgba(157,92,255,0)"); ctx.fillStyle = aura; ctx.beginPath(); ctx.arc(x, y, radius + 42, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.clip();
+  const sky = ctx.createLinearGradient(x - radius, y - radius, x + radius, y + radius); sky.addColorStop(0, "#e9fbff"); sky.addColorStop(1, "#a8b8ff"); ctx.fillStyle = sky; ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  ctx.fillStyle = colors.shirt; ctx.beginPath(); ctx.ellipse(x, y + 138, 122, 104, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = colors.skin; roundRect(ctx, x - 26, y + 50, 52, 70, 18); ctx.fill();
+  ctx.fillStyle = colors.hair; ctx.beginPath(); ctx.ellipse(x, y - 20, 87, 110, 0, 0, Math.PI * 2); ctx.fill();
+  const face = ctx.createRadialGradient(x - 35, y - 45, 12, x, y, 105); face.addColorStop(0, "#fff0e7"); face.addColorStop(.45, colors.skin); face.addColorStop(1, shadeColor(colors.skin, -24)); ctx.fillStyle = face; ctx.beginPath(); ctx.ellipse(x, y, 70, 91, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = colors.hair; ctx.beginPath(); ctx.ellipse(x - 8, y - 72, 70, 39, -.08, Math.PI, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#263044"; ctx.beginPath(); ctx.arc(x - 25, y - 8, 5, 0, Math.PI * 2); ctx.arc(x + 25, y - 8, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#a64d55"; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(x, y + 22, 24, .25, Math.PI - .25); ctx.stroke();
+  drawAvatarAccessories(ctx, value, x, y);
+  ctx.restore(); ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 9; ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.stroke(); ctx.strokeStyle = "#5de2e8"; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(x, y, radius + 13, 0, Math.PI * 2); ctx.stroke();
+}
+
+function drawAvatarAccessories(ctx: CanvasRenderingContext2D, value: string, x: number, y: number) {
+  const encoded = value.startsWith("avatar:v2:") ? value.split(":")[6] || "" : `${value.split(":")[6] || 0}-0`;
+  const palette = ["#172440", "#9d5cff", "#12cfe0", "#ff5c9b", "#ffb703", "#43d17d", "#ffffff", "#e95454"];
+  encoded.split(",").filter(Boolean).forEach((item) => {
+    const [id, colorIndex] = item.split("-").map(Number); const color = palette[colorIndex] || palette[0]; ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 6;
+    if (id === 1 || id === 2) { ctx.beginPath(); ctx.arc(x - 27, y - 5, 25, 0, Math.PI * 2); ctx.arc(x + 27, y - 5, 25, 0, Math.PI * 2); ctx.moveTo(x - 2, y - 5); ctx.lineTo(x + 2, y - 5); ctx.stroke(); }
+    if (id === 3) { ctx.beginPath(); ctx.arc(x, y - 62, 75, Math.PI * 1.08, Math.PI * 1.92); ctx.stroke(); }
+    if (id === 4) { ctx.beginPath(); ctx.ellipse(x + 64, y - 73, 22, 12, .6, 0, Math.PI * 2); ctx.ellipse(x + 90, y - 80, 22, 12, -.6, 0, Math.PI * 2); ctx.fill(); }
+    if (id === 5) { ctx.beginPath(); ctx.arc(x - 72, y + 25, 8, 0, Math.PI * 2); ctx.arc(x + 72, y + 25, 8, 0, Math.PI * 2); ctx.fill(); }
+    if (id === 6) { for (let i = 0; i < 6; i += 1) { const a = i * Math.PI / 3; ctx.beginPath(); ctx.arc(x + 74 + Math.cos(a) * 15, y - 70 + Math.sin(a) * 15, 11, 0, Math.PI * 2); ctx.fill(); } }
+    if (id === 7) { roundRect(ctx, x - 82, y - 99, 164, 55, 28); ctx.fill(); ctx.beginPath(); ctx.ellipse(x + 62, y - 48, 62, 14, .08, 0, Math.PI * 2); ctx.fill(); }
+  });
 }
 
 function drawCardStats(ctx: CanvasRenderingContext2D, points: number, missions: number, badges: number) {
@@ -277,10 +316,32 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: n
   ctx.beginPath(); ctx.roundRect(x, y, width, height, radius);
 }
 
-function drawContainedImage(ctx: CanvasRenderingContext2D, image: HTMLImageElement, x: number, y: number, width: number, height: number) {
-  const scale = Math.min(width / image.width, height / image.height);
-  const drawWidth = image.width * scale; const drawHeight = image.height * scale;
+function drawContainedImage(ctx: CanvasRenderingContext2D, image: HTMLImageElement | HTMLCanvasElement, x: number, y: number, width: number, height: number) {
+  const sourceWidth = image instanceof HTMLImageElement ? image.naturalWidth || image.width : image.width;
+  const sourceHeight = image instanceof HTMLImageElement ? image.naturalHeight || image.height : image.height;
+  const scale = Math.min(width / sourceWidth, height / sourceHeight);
+  const drawWidth = sourceWidth * scale; const drawHeight = sourceHeight * scale;
   ctx.drawImage(image, x + (width - drawWidth) / 2, y + (height - drawHeight) / 2, drawWidth, drawHeight);
+}
+
+function removeLightBackground(image: HTMLImageElement) {
+  const canvas = document.createElement("canvas"); canvas.width = image.naturalWidth || image.width; canvas.height = image.naturalHeight || image.height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return canvas;
+  ctx.drawImage(image, 0, 0);
+  const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const width = canvas.width, height = canvas.height, visited = new Uint8Array(width * height), queue: number[] = [];
+  const isBackground = (position: number) => { const offset = position * 4; const r = pixels.data[offset], g = pixels.data[offset + 1], b = pixels.data[offset + 2]; return Math.min(r, g, b) > 232 && Math.max(r, g, b) - Math.min(r, g, b) < 25; };
+  const add = (position: number) => { if (!visited[position] && isBackground(position)) { visited[position] = 1; queue.push(position); } };
+  for (let x = 0; x < width; x += 1) { add(x); add((height - 1) * width + x); }
+  for (let y = 0; y < height; y += 1) { add(y * width); add(y * width + width - 1); }
+  for (let cursor = 0; cursor < queue.length; cursor += 1) { const position = queue[cursor], x = position % width, y = Math.floor(position / width); if (x) add(position - 1); if (x + 1 < width) add(position + 1); if (y) add(position - width); if (y + 1 < height) add(position + width); pixels.data[position * 4 + 3] = 0; }
+  ctx.putImageData(pixels, 0, 0); return canvas;
+}
+
+function shadeColor(hex: string, amount: number) {
+  const value = parseInt(hex.replace("#", ""), 16); const clamp = (channel: number) => Math.max(0, Math.min(255, channel + amount));
+  return `rgb(${clamp(value >> 16)},${clamp((value >> 8) & 255)},${clamp(value & 255)})`;
 }
 
 function loadImage(src: string) {
