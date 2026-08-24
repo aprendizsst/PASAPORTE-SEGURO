@@ -10,8 +10,8 @@ Versión completa de la aplicación web para GitHub Pages y Google Apps Script. 
 - Creador de avatares 3D con seis tonos de piel, siete colores y estilos de cabello, ocho colores de camiseta, hasta tres accesorios simultáneos y colores independientes.
 - Pestaña Bonus con sopa de letras, sudoku seguro y tiro al blanco.
 - **Ruta Viva del Festival 3D** con las seis islas siempre visibles —incluida Ambiental—, nave espacial, avatar visible en la cabina y acceso filtrado a las misiones de cada estación.
-- Colección de insignias administrable: creación, edición, retiro, 10 iconos, dos colores, criterios y metas configurables.
-- Certificado A4 personalizado en PDF, con diseño editorial, avatar refinado, textos adaptables, sellos y logos integrados, generado directamente en el dispositivo.
+- Colección de insignias administrable: creación, edición, retiro, 16 iconos SVG, dos colores, criterios y metas configurables. Las insignias tienen acabado coleccionable con medallón, cinta, relieve, animación y estados de progreso.
+- Diploma A4 moderno en PDF, sin avatar, con fondo editorial, marco corporativo multicapa, medalla de puntos, sellos dentados e insignias vectoriales; conserva logos y textos adaptables.
 - Sellado protegido por código único de misión y carga opcional u obligatoria de fotos o videos como evidencia.
 - Portada dinámica con profundidad, brillo, acentos institucionales y acceso compatible con mouse, teclado y pantallas táctiles.
 - Reporte administrativo CSV y actualización manual de estadísticas.
@@ -64,6 +64,8 @@ Si el administrador pierde el acceso y tampoco puede recibir el código por corr
 4. Publique y copie la URL que termina en `/exec`.
 5. Abra `public/config.js` y pegue la URL entre las comillas de `apiUrl`.
 6. Cada vez que modifique `Code.gs`, cree una **nueva versión** de la implementación de Apps Script para que el sitio público use los cambios.
+
+El inicio de sesión incluye **Revisar conexión con Apps Script**. Esta opción prueba la URL pública, confirma que responde la API correcta y permite guardar una URL `/exec` válida en el navegador si `config.js` quedó vacío, antiguo o almacenado en caché.
 
 > El backend valida la sesión y el rol en cada operación administrativa. Las contraseñas no se guardan en texto visible.
 

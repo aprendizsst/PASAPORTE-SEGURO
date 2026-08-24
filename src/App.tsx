@@ -2,7 +2,7 @@
 
 import { FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { BonusGameId } from "./MiniGames";
-import { BadgeCollection, buildBadges, FestivalRoute, FinalPassportCard } from "./FestivalExperience";
+import { BadgeCollection, BadgeIcon, buildBadges, FestivalRoute, FinalPassportCard } from "./FestivalExperience";
 import type { BadgeDefinition } from "./FestivalExperience";
 
 const MiniGamesPage = lazy(() => import("./MiniGames"));
@@ -60,13 +60,16 @@ const accessories = [
 ];
 const accessoryColors = ["#172440", "#9d5cff", "#12cfe0", "#ff5c9b", "#ffb703", "#43d17d", "#ffffff", "#e95454"];
 const badgeIconOptions = [
-  { id: "star", label: "Estrella", glyph: "★" }, { id: "shield", label: "Escudo", glyph: "◆" },
-  { id: "trophy", label: "Trofeo", glyph: "♛" }, { id: "leaf", label: "Ambiental", glyph: "♧" },
-  { id: "heart", label: "Corazón", glyph: "♥" }, { id: "rocket", label: "Nave", glyph: "▲" },
-  { id: "sparkle", label: "Destello", glyph: "✦" }, { id: "medal", label: "Medalla", glyph: "●" },
-  { id: "planet", label: "Planeta", glyph: "◎" }, { id: "hand", label: "Compromiso", glyph: "☝" },
+  { id: "star", label: "Estrella" }, { id: "shield", label: "Escudo" },
+  { id: "trophy", label: "Trofeo" }, { id: "leaf", label: "Ambiental" },
+  { id: "heart", label: "Corazón" }, { id: "rocket", label: "Nave" },
+  { id: "sparkle", label: "Destello" }, { id: "medal", label: "Medalla" },
+  { id: "planet", label: "Planeta" }, { id: "hand", label: "Compromiso" },
+  { id: "flame", label: "Impulso" }, { id: "target", label: "Objetivo" },
+  { id: "bolt", label: "Energía" }, { id: "crown", label: "Excelencia" },
+  { id: "compass", label: "Exploración" }, { id: "hands", label: "Equipo" },
 ];
-const badgePalette = ["#9d5cff", "#12cfe0", "#ffb703", "#ff5c9b", "#43d17d", "#7253dc", "#8bd33f", "#ef5b5b", "#264d87", "#f4d35e"];
+const badgePalette = ["#c3010a", "#f337a2", "#4ab2fb", "#ffc845", "#12335a", "#12cfe0", "#43d17d", "#8bd33f", "#7253dc", "#ef5b5b"];
 const defaultAvatar = "avatar:v2:2:0:1:0:";
 const cargos = ["Auxiliar administrativo", "Profesional asistencial", "Líder de proceso", "Coordinador(a)", "Analista", "Otro"];
 const uads = ["Sede Central", "UAD Duitama", "UAD Chiquinquirá", "UAD Miraflores", "UAD Guateque"];
@@ -83,9 +86,24 @@ declare global {
   interface Window { PASSPORT_CONFIG?: { apiUrl?: string; features?: Record<string, boolean> } }
 }
 
+const API_OVERRIDE_KEY = "pasaporte_apps_script_url";
+
+function normalizeAppsScriptUrl(value: string) {
+  const cleaned = String(value || "").trim().replace(/^['\"]|['\"]$/g, "");
+  if (!cleaned) return "";
+  try {
+    const url = new URL(cleaned);
+    url.hash = "";
+    url.search = "";
+    return url.toString().replace(/\/$/, "");
+  } catch { return cleaned; }
+}
+
 function getApiUrl() {
   if (typeof window === "undefined") return "";
-  return window.PASSPORT_CONFIG?.apiUrl?.trim() || "";
+  let saved = "";
+  try { saved = localStorage.getItem(API_OVERRIDE_KEY) || ""; } catch { /* El archivo config.js sigue disponible como respaldo. */ }
+  return normalizeAppsScriptUrl(saved || window.PASSPORT_CONFIG?.apiUrl || "");
 }
 
 function featureEnabled(name: string) {
@@ -109,7 +127,7 @@ const inflightReads = new Map<string, Promise<unknown>>();
 const WRITE_API_ACTIONS = new Set(["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode"]);
 
 function apiPolicy(action: string, payload?: Record<string, unknown>) {
-  if (action === "login" || action === "register") return { attempts: 2, timeoutMs: 14000 };
+  if (action === "login" || action === "register") return { attempts: 2, timeoutMs: 22000 };
   if (action === "requestPasswordReset") return { attempts: 2, timeoutMs: 20000 };
   if (action === "completeMission" && payload?.evidence) return { attempts: 2, timeoutMs: 45000 };
   if (WRITE_API_ACTIONS.has(action)) return { attempts: 3, timeoutMs: 14000 };
@@ -119,8 +137,27 @@ function apiPolicy(action: string, payload?: Record<string, unknown>) {
 function apiUrlOrThrow() {
   const url = getApiUrl();
   if (!url) throw new Error("El Pasaporte Seguro no tiene configurada la conexión con Apps Script.");
-  if (/TU[_ -]?IMPLEMENTACION|TU[_ -]?ID/i.test(url) || /\/dev(?:\?|$)/.test(url)) throw new Error("La conexión debe usar la URL pública de Apps Script terminada en /exec.");
+  if (/TU[_ -]?IMPLEMENTACION|TU[_ -]?ID/i.test(url) || !/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/i.test(url)) throw new Error("La conexión debe usar la URL pública completa de Apps Script terminada en /exec.");
   return url;
+}
+
+async function probeApiConnection(candidate: string) {
+  const normalized = normalizeAppsScriptUrl(candidate);
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/i.test(normalized)) throw new Error("Pega la URL pública completa que termina en /exec.");
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 16000);
+  try {
+    const response = await fetch(`${normalized}?health=${Date.now()}`, { method: "GET", cache: "no-store", redirect: "follow", signal: controller.signal });
+    if (!response.ok) throw new Error(`Apps Script respondió con estado ${response.status}.`);
+    const result = JSON.parse(await response.text()) as { ok?: boolean; data?: { status?: string } };
+    if (!result.ok || result.data?.status !== "ready") throw new Error("La URL respondió, pero no corresponde a esta API del Pasaporte Seguro.");
+    return normalized;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw new Error("Apps Script tardó demasiado en responder.");
+    if (error instanceof SyntaxError) throw new Error("La URL abrió una página de Google en lugar de la API. Publica la implementación para cualquier persona.");
+    if (error instanceof TypeError) throw new Error("El navegador no pudo acceder a la implementación. Revisa que sea pública y esté desplegada como aplicación web.");
+    throw error;
+  } finally { window.clearTimeout(timeout); }
 }
 
 async function callApi(action: string, payload: Record<string, unknown> = {}) {
@@ -301,6 +338,10 @@ export default function Home() {
   const [bonusCompleted, setBonusCompleted] = useState<string[]>([]);
   const [bonusScores, setBonusScores] = useState<Record<string, number>>({});
   const [adminDashboardLoaded, setAdminDashboardLoaded] = useState(false);
+  const [connectionOpen, setConnectionOpen] = useState(false);
+  const [connectionUrl, setConnectionUrl] = useState(() => getApiUrl());
+  const [connectionStatus, setConnectionStatus] = useState<"idle" | "testing" | "ready" | "error">("idle");
+  const [connectionMessage, setConnectionMessage] = useState("");
   const catalogsRequested = useRef(false);
   const visibleMissions = useMemo(() => user ? missions.filter((m) => m.audience === "Todas las UAD" || m.audience === user.uad) : [], [missions, user]);
   const filteredMissions = missionFilter === "Todas" ? visibleMissions : visibleMissions.filter((m) => m.station === missionFilter);
@@ -428,7 +469,20 @@ export default function Home() {
       } else if (cedula === "1000000000" && password === "Demo1234*") setUser({ ...demoUser, name: "Administrador Festival", cedula, email: "admin@empresa.com", role: "ADMIN", avatar: "avatar:v1:3:1:0:5:1" });
       else if (cedula && password) setUser({ ...demoUser, cedula });
       revealPassport("dashboard");
-    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible iniciar sesión."); }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No fue posible iniciar sesión.";
+      if (/Apps Script|conexión|implementación|servicio/i.test(message)) { setConnectionUrl(getApiUrl()); setConnectionOpen(true); setConnectionStatus("error"); setConnectionMessage(message); }
+      notify(message);
+    }
+    finally { setBusyAction(""); }
+  }
+  async function saveApiConnection() {
+    setConnectionStatus("testing"); setConnectionMessage("Comprobando la implementación pública…"); setBusyAction("test-connection");
+    try {
+      const verified = await probeApiConnection(connectionUrl);
+      localStorage.setItem(API_OVERRIDE_KEY, verified);
+      setConnectionUrl(verified); setConnectionStatus("ready"); setConnectionMessage("Conexión verificada. Ya puedes iniciar sesión."); catalogsRequested.current = false;
+    } catch (error) { setConnectionStatus("error"); setConnectionMessage(error instanceof Error ? error.message : "No fue posible verificar la conexión."); }
     finally { setBusyAction(""); }
   }
   async function requestPasswordReset(event: FormEvent<HTMLFormElement>) {
@@ -724,7 +778,7 @@ export default function Home() {
 
     {opened && !user && <section className="auth-stage" id="passport-access"><div className="auth-book"><aside className="auth-visual"><p className="mini-kicker">FESTIVAL 2026</p><div className="passport-mark">P</div><h2>Tu ruta segura comienza aquí.</h2><p>Regístrate, visita las estaciones y colecciona cada sello del festival.</p><div className="mini-route">{stations.map((s) => <span key={s.name} style={{ background: s.color }}><StationIcon station={s.name} /></span>)}</div></aside>
       <div className="auth-form-side"><div className="auth-switch" role="tablist"><button className={authMode === "login" ? "active" : ""} onClick={() => setAuthMode("login")}>Iniciar sesión</button><button className={authMode === "register" ? "active" : ""} onClick={() => setAuthMode("register")}>Crear pasaporte</button></div>
-        {authMode === "login" ? <form className="passport-form" onSubmit={login}><p className="step-label">BIENVENIDO DE NUEVO</p><h2>Continúa tu recorrido</h2><label>Número de cédula<input name="cedula" inputMode="numeric" maxLength={25} autoComplete="username" placeholder="Ej. 1010101010" required /></label><label>Contraseña<input name="password" type="password" maxLength={128} autoComplete="current-password" placeholder="Tu contraseña" required /></label><button className="primary-button" type="submit" disabled={busyAction === "login"}>{busyAction === "login" ? <><LoadingDot /> Verificando...</> : <>Ingresar al pasaporte <UiIcon name="arrow" /></>}</button><button className="forgot-password" type="button" onClick={() => { setAuthMode("recover"); setRecoveryStage("request"); }}>¿Olvidaste tu contraseña?</button>{!getApiUrl() && <p className="demo-note">Demostración administrador: <b>1000000000</b> / <b>Demo1234*</b></p>}</form>
+        {authMode === "login" ? <form className="passport-form" onSubmit={login}><p className="step-label">BIENVENIDO DE NUEVO</p><h2>Continúa tu recorrido</h2><label>Número de cédula<input name="cedula" inputMode="numeric" maxLength={25} autoComplete="username" placeholder="Ej. 1010101010" required /></label><label>Contraseña<input name="password" type="password" maxLength={128} autoComplete="current-password" placeholder="Tu contraseña" required /></label><button className="primary-button" type="submit" disabled={busyAction === "login"}>{busyAction === "login" ? <><LoadingDot /> Verificando...</> : <>Ingresar al pasaporte <UiIcon name="arrow" /></>}</button><button className="forgot-password" type="button" onClick={() => { setAuthMode("recover"); setRecoveryStage("request"); }}>¿Olvidaste tu contraseña?</button><button className="connection-toggle" type="button" onClick={() => { setConnectionUrl(getApiUrl()); setConnectionOpen((current) => !current); }}>Revisar conexión con Apps Script</button>{connectionOpen && <div className={`connection-panel ${connectionStatus}`}><span><UiIcon name="settings" /></span><div><b>Conexión del pasaporte</b><small>Pega la URL de la aplicación web terminada en /exec.</small></div><input type="url" value={connectionUrl} onChange={(event) => { setConnectionUrl(event.target.value); setConnectionStatus("idle"); setConnectionMessage(""); }} placeholder="https://script.google.com/macros/s/.../exec" aria-label="URL pública de Apps Script" /><button type="button" onClick={() => void saveApiConnection()} disabled={busyAction === "test-connection"}>{busyAction === "test-connection" ? "Verificando…" : "Validar y guardar"}</button>{connectionMessage && <p>{connectionMessage}</p>}</div>}{!getApiUrl() && <p className="demo-note">Demostración administrador: <b>1000000000</b> / <b>Demo1234*</b></p>}</form>
         : authMode === "register" ? <form className="passport-form register-grid" onSubmit={register}><div className="form-heading"><p className="step-label">NUEVO VIAJERO</p><h2>Crea tu pasaporte</h2></div><button className="register-avatar-card wide" type="button" onClick={() => openAvatarStudio("register")}><AvatarPortrait value={encodeAvatar(avatarDraft)} size="small" /><span><b>Crea tu foto de pasaporte</b><small>Elige rostro, cabello, ropa y accesorios antes de registrarte.</small></span><i>Personalizar →</i></button><label className="wide">Nombre completo<input name="name" maxLength={120} autoComplete="name" placeholder="Nombres y apellidos" required /></label><label>Número de cédula<input name="cedula" inputMode="numeric" maxLength={25} autoComplete="username" placeholder="Sin puntos" required /></label><label>Número de teléfono<input name="phone" type="tel" maxLength={30} autoComplete="tel" placeholder="300 000 0000" required /></label><label className="wide">Correo electrónico<input name="email" type="email" maxLength={160} autoComplete="email" placeholder="nombre@empresa.com" required /></label><label>Cargo<select name="cargo">{catalogs.cargos.map((x) => <option key={x}>{x}</option>)}</select></label><label>UAD<select name="uad">{catalogs.uads.map((x) => <option key={x}>{x}</option>)}</select></label><label className="wide">Contraseña<input name="password" type="password" minLength={8} maxLength={128} autoComplete="new-password" placeholder="Mínimo 8 caracteres" required /></label><button className="primary-button wide" type="submit" disabled={busyAction === "register"}>{busyAction === "register" ? <><LoadingDot /> Creando...</> : <>Crear mi pasaporte <UiIcon name="arrow" /></>}</button></form>
         : recoveryStage === "request" ? <form className="passport-form recovery-form" onSubmit={requestPasswordReset}><p className="step-label">RECUPERAR ACCESO</p><h2>Restablece tu contraseña</h2><p>Escribe la cédula y el correo usados al crear tu pasaporte. Te enviaremos un código válido por 15 minutos.</p><label>Número de cédula<input name="cedula" inputMode="numeric" maxLength={25} required /></label><label>Correo registrado<input name="email" type="email" maxLength={160} autoComplete="email" required /></label><button className="primary-button" disabled={busyAction === "request-reset"}>{busyAction === "request-reset" ? <><LoadingDot /> Enviando...</> : <>Enviar código <UiIcon name="key" /></>}</button><button className="forgot-password" type="button" onClick={() => setRecoveryStage("reset")}>Ya tengo un código de respaldo</button><button className="auth-back" type="button" onClick={() => setAuthMode("login")}>← Volver al inicio de sesión</button></form>
         : <form className="passport-form recovery-form" onSubmit={resetPassword}><p className="step-label">CÓDIGO DE SEGURIDAD</p><h2>Crea una contraseña nueva</h2><p>Usa el código enviado a tu correo o el código temporal entregado por el administrador.</p><label>Número de cédula<input name="cedula" inputMode="numeric" maxLength={25} defaultValue={recoveryCedula} required /></label><label>Código de recuperación<input name="code" maxLength={12} autoCapitalize="characters" placeholder="Ej. A7K9P2" required /></label><label>Nueva contraseña<input name="password" type="password" minLength={8} maxLength={128} autoComplete="new-password" required /></label><label>Confirmar contraseña<input name="confirmation" type="password" minLength={8} maxLength={128} autoComplete="new-password" required /></label><button className="primary-button" disabled={busyAction === "reset-password"}>{busyAction === "reset-password" ? <><LoadingDot /> Guardando...</> : <>Restablecer contraseña <UiIcon name="check" /></>}</button><button className="auth-back" type="button" onClick={() => setRecoveryStage("request")}>← Solicitar otro código</button></form>}
@@ -947,7 +1001,7 @@ function AdminPage({ missions, people, evidence, badges, uadOptions, busyAction,
       <div className="active-missions"><div className="section-heading"><div><p className="step-label">PUBLICADAS</p><h3>Misiones activas</h3></div><span>{missions.length}</span></div>{missions.slice().reverse().map((m) => <article key={m.id}><span style={{ background: m.color }}><StationIcon station={m.station} /></span><div><b>{m.title}</b><small>{m.station} · {m.audience}</small><code><UiIcon name="key" /> {m.sealCode || "Cargando…"}</code></div><div className="mission-admin-actions"><button aria-label={`Editar ${m.title}`} title="Editar misión" onClick={() => setEditTarget(m)}><UiIcon name="edit" /></button><button className="delete-mission" aria-label={`Eliminar ${m.title}`} title="Eliminar misión" onClick={() => setDeleteTarget(m)}><UiIcon name="trash" /></button></div></article>)}</div>
     </div> : tab === "badges" ? <div className="badge-admin-grid">
       <form className="create-mission-card badge-builder" onSubmit={createBadge}><p className="step-label">NUEVO RECONOCIMIENTO</p><h3>Crear una insignia</h3><BadgeFormFields /><button className="primary-button" disabled={busyAction === "create-badge"}>{busyAction === "create-badge" ? <><LoadingDot /> Publicando...</> : <>Publicar insignia <UiIcon name="badge" /></>}</button></form>
-      <div className="admin-badge-list"><div className="section-heading"><div><p className="step-label">COLECCIÓN ACTIVA</p><h3>Insignias publicadas</h3></div><span>{badges.length}</span></div>{badges.map((badge) => <article key={badge.id}><span className="admin-medal-preview" style={{ "--badge-a": badge.primaryColor, "--badge-b": badge.secondaryColor } as React.CSSProperties}>{badgeIconOptions.find((option) => option.id === badge.icon)?.glyph || "★"}</span><div><b>{badge.title}</b><small>{badgeCriterionLabel(badge)} · meta {badge.goal}</small><i><span style={{ background: badge.primaryColor }} /><span style={{ background: badge.secondaryColor }} /></i></div><div className="mission-admin-actions"><button title="Editar insignia" onClick={() => setBadgeEditTarget(badge)}><UiIcon name="edit" /></button><button className="delete-mission" title="Retirar insignia" onClick={() => setBadgeDeleteTarget(badge)}><UiIcon name="trash" /></button></div></article>)}</div>
+      <div className="admin-badge-list"><div className="section-heading"><div><p className="step-label">COLECCIÓN ACTIVA</p><h3>Insignias publicadas</h3></div><span>{badges.length}</span></div>{badges.map((badge) => <article key={badge.id}><span className="admin-medal-preview" style={{ "--badge-a": badge.primaryColor, "--badge-b": badge.secondaryColor } as React.CSSProperties}><BadgeIcon icon={badge.icon} /></span><div><b>{badge.title}</b><small>{badgeCriterionLabel(badge)} · meta {badge.goal}</small><i><span style={{ background: badge.primaryColor }} /><span style={{ background: badge.secondaryColor }} /></i></div><div className="mission-admin-actions"><button title="Editar insignia" onClick={() => setBadgeEditTarget(badge)}><UiIcon name="edit" /></button><button className="delete-mission" title="Retirar insignia" onClick={() => setBadgeDeleteTarget(badge)}><UiIcon name="trash" /></button></div></article>)}</div>
     </div> : tab === "users" ? <div className="users-admin"><div className="section-heading"><div><p className="step-label">CONTROL DE ACCESO</p><h3>Usuarios registrados</h3><p>Busca, edita, recupera el acceso o elimina registros con errores.</p></div><button className="secondary-button" onClick={onRefresh}>Actualizar ↻</button></div><div className="user-search"><UiIcon name="users" /><input value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder="Buscar usuario..." /></div><div className="user-management-list">{filteredPeople.map((person) => <article key={person.id}><span>{person.name.charAt(0).toUpperCase()}</span><div><b>{person.name}</b><small>CC {person.cedula} · {person.uad}</small><i>{person.email}</i></div><div className="user-score"><b>{person.points}</b><small>puntos</small></div><div className="user-actions"><button title="Editar usuario" disabled={busyAction === `edit-user-${person.id}`} onClick={() => setUserEditTarget(person)}><UiIcon name="edit" /><span>Editar</span></button><button title="Generar código de respaldo" disabled={busyAction === `recovery-user-${person.id}`} onClick={() => void generateBackupCode(person)}><UiIcon name="key" /><span>Respaldo</span></button><button className="danger-outline" title="Eliminar usuario" disabled={busyAction === `delete-user-${person.id}`} onClick={() => setUserDeleteTarget(person)}><UiIcon name="trash" /><span>Eliminar</span></button></div></article>)}</div>{!filteredPeople.length && <div className="empty-state"><span><UiIcon name="users" /></span><h3>No se encontraron usuarios</h3><p>Prueba con otro nombre, cédula o UAD.</p></div>}</div>
     : <div className="evidence-admin"><div className="section-heading"><div><p className="step-label">VALIDACIÓN VISUAL</p><h3>Evidencias recientes</h3><p>Los archivos se consultan solo al abrir Administración.</p></div><button className="secondary-button" onClick={onRefresh}>Actualizar ↻</button></div>{evidence.length ? <div className="evidence-grid">{evidence.map((item) => <article key={item.id}><span className="evidence-type"><UiIcon name="camera" /></span><div><b>{item.userName}</b><small>{item.missionTitle}</small><p>{item.fileName} · {(item.size / 1024 / 1024).toFixed(1)} MB</p></div><a href={item.url} target="_blank" rel="noreferrer">Revisar ↗</a></article>)}</div> : <div className="empty-state"><span><UiIcon name="camera" /></span><h3>Aún no hay evidencias</h3><p>Las fotos y videos aparecerán aquí cuando los participantes validen sus misiones.</p></div>}</div>}
 
@@ -966,7 +1020,7 @@ function BadgeFormFields({ value }: { value?: BadgeDefinition }) {
   return <>
     <label>Nombre de la insignia<input name="title" defaultValue={value?.title} maxLength={80} placeholder="Ej. Guardián ambiental" required /></label>
     <label>Descripción<textarea name="description" defaultValue={value?.description} maxLength={240} placeholder="Explica cómo se obtiene..." required /></label>
-    <fieldset className="badge-icon-picker"><legend>Icono</legend>{badgeIconOptions.map((option) => <label key={option.id}><input type="radio" name="icon" value={option.id} defaultChecked={(value?.icon || "star") === option.id} /><span>{option.glyph}</span><small>{option.label}</small></label>)}</fieldset>
+    <fieldset className="badge-icon-picker"><legend>Icono</legend>{badgeIconOptions.map((option) => <label key={option.id}><input type="radio" name="icon" value={option.id} defaultChecked={(value?.icon || "star") === option.id} /><span><BadgeIcon icon={option.id} /></span><small>{option.label}</small></label>)}</fieldset>
     <div className="badge-color-fields"><label>Color principal<input type="color" name="primaryColor" defaultValue={value?.primaryColor || badgePalette[0]} /></label><label>Color secundario<input type="color" name="secondaryColor" defaultValue={value?.secondaryColor || badgePalette[1]} /></label></div>
     <div className="badge-palette" aria-label="Paleta sugerida">{badgePalette.map((color) => <i key={color} style={{ background: color }} title={color} />)}</div>
     <label>Condición para desbloquear<select name="criterion" defaultValue={value?.criterion || "MISSIONS"}><option value="MISSIONS">Cantidad de misiones</option><option value="POINTS">Puntos acumulados</option><option value="BONUS">Minijuegos completados</option><option value="STATIONS">Estaciones visitadas</option><option value="STATION">Completar una estación específica</option><option value="ALL_MISSIONS">Completar todo el pasaporte</option></select></label>

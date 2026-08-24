@@ -35,7 +35,7 @@ const CACHE_KEYS = {
   SESSION_CLEANUP: "pasaporte:session-cleanup:v1",
   ADMIN_EVIDENCE: "pasaporte:admin-evidence:v1",
   BADGES: "pasaporte:badges:v1",
-  SCHEMA: "pasaporte:schema:v4",
+  SCHEMA: "pasaporte:schema:v5",
 };
 
 const CACHE_TTL = {
@@ -49,7 +49,7 @@ const CACHE_TTL = {
 const WRITE_ACTIONS = ["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode"];
 
 function doGet() {
-  return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.2.0" } });
+  return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.2.10" } });
 }
 
 function doPost(event) {
@@ -100,15 +100,21 @@ function setupPasaporteSeguro() {
   seedMissions_();
   seedMissionCodes_();
   seedBadges_();
+  migrateDefaultBadgeDesigns_();
   invalidateMissionCaches_();
   CacheService.getScriptCache().remove(CACHE_KEYS.BADGES);
   CacheService.getScriptCache().put(CACHE_KEYS.SCHEMA, "ready", 21600);
+  PropertiesService.getScriptProperties().setProperty("PASAPORTE_SCHEMA_VERSION", "5");
   return "Estructura actualizada sin borrar datos. Misiones, insignias, evidencias y recuperación de contraseñas están listas.";
 }
 
 function ensureRuntimeReady_() {
   const cache = CacheService.getScriptCache();
   if (cache.get(CACHE_KEYS.SCHEMA)) return;
+  if (PropertiesService.getScriptProperties().getProperty("PASAPORTE_SCHEMA_VERSION") === "5") {
+    cache.put(CACHE_KEYS.SCHEMA, "ready", 21600);
+    return;
+  }
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(8000)) throw new Error("El sistema se está preparando. Intenta nuevamente en unos segundos.");
   try {
@@ -118,6 +124,8 @@ function ensureRuntimeReady_() {
       seedMissions_();
       seedMissionCodes_();
       seedBadges_();
+      migrateDefaultBadgeDesigns_();
+      PropertiesService.getScriptProperties().setProperty("PASAPORTE_SCHEMA_VERSION", "5");
       cache.put(CACHE_KEYS.SCHEMA, "ready", 21600);
     }
   } finally { lock.releaseLock(); }
@@ -614,7 +622,7 @@ function validateMissionInput_(mission) {
 function validateBadgeInput_(input) {
   const title = limitedText_(input.title, 80, "El nombre de la insignia es obligatorio.");
   const description = limitedText_(input.description, 240, "La descripción es obligatoria.");
-  const icons = ["star", "shield", "trophy", "leaf", "heart", "rocket", "sparkle", "medal", "planet", "hand"];
+  const icons = ["star", "shield", "trophy", "leaf", "heart", "rocket", "sparkle", "medal", "planet", "hand", "flame", "target", "bolt", "crown", "compass", "hands"];
   const criteria = ["MISSIONS", "POINTS", "BONUS", "STATIONS", "STATION", "ALL_MISSIONS"];
   const icon = String(input.icon || "star");
   const criterion = String(input.criterion || "MISSIONS").toUpperCase();
@@ -1075,17 +1083,39 @@ function seedBadges_() {
   if (sheetObjects_(SHEETS.BADGES).length) return;
   const now = new Date();
   const seeds = [
-    ["first-stamp", "Primer sello", "Completaste tu primera misión.", "star", "#9d5cff", "#d7c7ff", "MISSIONS", 1, "", 10],
-    ["route-keeper", "Guardián de la ruta", "Visitaste tres estaciones diferentes.", "shield", "#12cfe0", "#a5f4f7", "STATIONS", 3, "", 20],
-    ["bonus-explorer", "Explorador bonus", "Superaste tu primer minijuego.", "rocket", "#ffb703", "#ffe39b", "BONUS", 1, "", 30],
-    ["bright-mind", "Mente brillante", "Completaste los tres retos bonus.", "sparkle", "#ff5c9b", "#ffc2d9", "BONUS", 3, "", 40],
-    ["point-collector", "Coleccionista", "Alcanzaste 500 puntos en tu recorrido.", "medal", "#43d17d", "#baf3cf", "POINTS", 500, "", 50],
-    ["festival-ambassador", "Embajador del Festival", "Sellaste todas las misiones de tu pasaporte.", "trophy", "#7253dc", "#cfc2ff", "ALL_MISSIONS", 1, "", 60],
+    ["first-stamp", "Primer sello", "Completaste tu primera misión.", "star", "#c3010a", "#f337a2", "MISSIONS", 1, "", 10],
+    ["route-keeper", "Guardián de la ruta", "Visitaste tres estaciones diferentes.", "shield", "#0c75c9", "#4ab2fb", "STATIONS", 3, "", 20],
+    ["bonus-explorer", "Explorador bonus", "Superaste tu primer minijuego.", "rocket", "#f0a800", "#ffc845", "BONUS", 1, "", 30],
+    ["bright-mind", "Mente brillante", "Completaste los tres retos bonus.", "sparkle", "#d92591", "#f337a2", "BONUS", 3, "", 40],
+    ["point-collector", "Coleccionista", "Alcanzaste 500 puntos en tu recorrido.", "medal", "#249c64", "#43d17d", "POINTS", 500, "", 50],
+    ["festival-ambassador", "Embajador del Festival", "Sellaste todas las misiones de tu pasaporte.", "trophy", "#12335a", "#4ab2fb", "ALL_MISSIONS", 1, "", 60],
   ];
   seeds.forEach(function (badge) {
     appendObject_(SHEETS.BADGES, { Id: badge[0], Titulo: badge[1], Descripcion: badge[2], Icono: badge[3], ColorPrimario: badge[4], ColorSecundario: badge[5], TipoCriterio: badge[6], Meta: badge[7], Estacion: badge[8], Activa: true, Orden: badge[9], CreadaEn: now, CreadaPor: "SISTEMA", EditadaEn: "" });
   });
   invalidateBadgeCaches_();
+}
+
+function migrateDefaultBadgeDesigns_() {
+  const designs = {
+    "first-stamp": ["#9d5cff", "#d7c7ff", "#c3010a", "#f337a2"],
+    "route-keeper": ["#12cfe0", "#a5f4f7", "#0c75c9", "#4ab2fb"],
+    "bonus-explorer": ["#ffb703", "#ffe39b", "#f0a800", "#ffc845"],
+    "bright-mind": ["#ff5c9b", "#ffc2d9", "#d92591", "#f337a2"],
+    "point-collector": ["#43d17d", "#baf3cf", "#249c64", "#43d17d"],
+    "festival-ambassador": ["#7253dc", "#cfc2ff", "#12335a", "#4ab2fb"],
+  };
+  let changed = false;
+  sheetObjects_(SHEETS.BADGES).forEach(function (badge) {
+    const design = designs[String(badge.Id)];
+    if (!design) return;
+    const primary = String(badge.ColorPrimario || "").toLowerCase();
+    const secondary = String(badge.ColorSecundario || "").toLowerCase();
+    if (primary !== design[0] || secondary !== design[1]) return;
+    updateObjectRow_(SHEETS.BADGES, badge._row, { ColorPrimario: design[2], ColorSecundario: design[3], EditadaEn: new Date() });
+    changed = true;
+  });
+  if (changed) invalidateBadgeCaches_();
 }
 
 function cacheGet_(key) {
