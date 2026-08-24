@@ -1,6 +1,6 @@
 # Actualización segura a Pasaporte Seguro 3.2
 
-> Revisión 3.2.1: portada vibrante y adaptable, paleta institucional basada en los logos y acceso desde portada reforzado para mouse, teclado y pantallas táctiles.
+> Revisión 3.2.2: portada vibrante y adaptable, paleta institucional basada en los logos y acceso desde portada corregido para mouse, teclado y pantallas táctiles. En escritorio, el botón se activa desde la pulsación inicial y queda aislado del movimiento 3D para que la inclinación de la portada no cancele el clic.
 
 Esta versión conserva usuarios, misiones, sellos, evidencias, insignias y resultados existentes.
 
