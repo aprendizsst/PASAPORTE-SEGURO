@@ -11,7 +11,7 @@ Versión completa de la aplicación web para GitHub Pages y Google Apps Script. 
 - Pestaña Bonus con sopa de letras, sudoku seguro y tiro al blanco.
 - **Ruta Viva del Festival 3D** con las seis islas siempre visibles —incluida Ambiental—, nave espacial, avatar visible en la cabina y acceso filtrado a las misiones de cada estación.
 - Colección de insignias administrable: creación, edición, retiro, 10 iconos, dos colores, criterios y metas configurables.
-- Certificado holográfico personalizado en PNG, con avatar 3D y logos integrados sin fondo, generado directamente en el dispositivo.
+- Certificado personalizado en PDF, con avatar, sellos y logos integrados, generado directamente en el dispositivo.
 - Sellado protegido por código único de misión y carga opcional u obligatoria de fotos o videos como evidencia.
 - Portada dinámica con profundidad, brillo, constelaciones y ruta de vuelo.
 - Reporte administrativo CSV y actualización manual de estadísticas.
@@ -19,7 +19,7 @@ Versión completa de la aplicación web para GitHub Pages y Google Apps Script. 
 - Carga diferida de minijuegos, caché por usuario, restauración de sesión, reintentos progresivos e identificadores de operación para reducir cargas y duplicados.
 - Inicio de sesión optimizado por búsqueda directa, reutilización segura de sesión y restauración instantánea desde el dispositivo.
 - Interacciones optimistas para misiones, avatar y bonus: la pantalla responde primero y confirma el guardado en segundo plano.
-- Gestión administrativa de usuarios con búsqueda, eliminación anonimizada y conservación del historial.
+- Gestión administrativa de usuarios con búsqueda, edición, eliminación anonimizada, códigos de respaldo y conservación del historial.
 - Recuperación de contraseña por correo y código de respaldo de un solo uso generado por el administrador.
 
 La eliminación administrativa desactiva la misión y conserva los registros históricos de los participantes.
