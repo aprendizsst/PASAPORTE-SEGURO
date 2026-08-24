@@ -21,7 +21,7 @@ const HEADERS = {
   Progreso: ["Id", "UsuarioId", "MisionId", "Estado", "IniciadaEn", "CompletadaEn"],
   Sesiones: ["Token", "UsuarioId", "ExpiraEn", "CreadaEn"],
   Catalogos: ["Tipo", "Valor", "Activo"],
-  Bonus: ["Id", "UsuarioId", "JuegoId", "Puntaje", "CompletadoEn"],
+  Bonus: ["Id", "UsuarioId", "JuegoId", "Puntaje", "CompletadoEn", "Record"],
   Evidencias: ["Id", "UsuarioId", "MisionId", "ArchivoId", "NombreArchivo", "TipoMime", "TamanoBytes", "Url", "Estado", "CreadoEn"],
   Insignias: ["Id", "Titulo", "Descripcion", "Icono", "ColorPrimario", "ColorSecundario", "TipoCriterio", "Meta", "Estacion", "Activa", "Orden", "CreadaEn", "CreadaPor", "EditadaEn"],
   Recuperaciones: ["Id", "UsuarioId", "CodigoHash", "ExpiraEn", "Intentos", "Usado", "Canal", "CreadoEn", "VerificadoEn", "TicketHash", "TicketExpiraEn"],
@@ -35,7 +35,8 @@ const CACHE_KEYS = {
   SESSION_CLEANUP: "pasaporte:session-cleanup:v1",
   ADMIN_EVIDENCE: "pasaporte:admin-evidence:v1",
   BADGES: "pasaporte:badges:v1",
-  SCHEMA: "pasaporte:schema:v6",
+  BONUS_LEADERBOARD: "pasaporte:bonus-leaderboard:v1",
+  SCHEMA: "pasaporte:schema:v7",
 };
 
 const CACHE_TTL = {
@@ -49,7 +50,7 @@ const CACHE_TTL = {
 const WRITE_ACTIONS = ["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "verifyPasswordResetCode", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode"];
 
 function doGet() {
-  return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.2.12" } });
+  return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.2.13" } });
 }
 
 function doPost(event) {
@@ -73,6 +74,7 @@ function doPost(event) {
     else if (action === "completeMission") data = completeMissionApi_(request);
     else if (action === "updateAvatar") data = updateAvatarApi_(request);
     else if (action === "completeBonus") data = completeBonusApi_(request);
+    else if (action === "getBonusLeaderboard") data = bonusLeaderboardApi_(request);
     else if (action === "requestPasswordReset") data = requestPasswordResetApi_(request);
     else if (action === "verifyPasswordResetCode") data = verifyPasswordResetCodeApi_(request);
     else if (action === "resetPassword") data = resetPasswordApi_(request);
@@ -102,17 +104,18 @@ function setupPasaporteSeguro() {
   seedMissionCodes_();
   seedBadges_();
   migrateDefaultBadgeDesigns_();
+  migrateExpandedBonusBadge_();
   invalidateMissionCaches_();
   CacheService.getScriptCache().remove(CACHE_KEYS.BADGES);
   CacheService.getScriptCache().put(CACHE_KEYS.SCHEMA, "ready", 21600);
-  PropertiesService.getScriptProperties().setProperty("PASAPORTE_SCHEMA_VERSION", "6");
-  return "Estructura actualizada sin borrar datos. Misiones, insignias, evidencias y recuperación de contraseñas están listas.";
+  PropertiesService.getScriptProperties().setProperty("PASAPORTE_SCHEMA_VERSION", "7");
+  return "Estructura actualizada sin borrar datos. Misiones, insignias, evidencias, recuperación y récords Bonus están listos.";
 }
 
 function ensureRuntimeReady_() {
   const cache = CacheService.getScriptCache();
   if (cache.get(CACHE_KEYS.SCHEMA)) return;
-  if (PropertiesService.getScriptProperties().getProperty("PASAPORTE_SCHEMA_VERSION") === "6") {
+  if (PropertiesService.getScriptProperties().getProperty("PASAPORTE_SCHEMA_VERSION") === "7") {
     cache.put(CACHE_KEYS.SCHEMA, "ready", 21600);
     return;
   }
@@ -126,7 +129,8 @@ function ensureRuntimeReady_() {
       seedMissionCodes_();
       seedBadges_();
       migrateDefaultBadgeDesigns_();
-      PropertiesService.getScriptProperties().setProperty("PASAPORTE_SCHEMA_VERSION", "6");
+      migrateExpandedBonusBadge_();
+      PropertiesService.getScriptProperties().setProperty("PASAPORTE_SCHEMA_VERSION", "7");
       cache.put(CACHE_KEYS.SCHEMA, "ready", 21600);
     }
   } finally { lock.releaseLock(); }
@@ -383,19 +387,54 @@ function updateAvatarApi_(request) {
 function completeBonusApi_(request) {
   const user = requireSession_(request.token);
   const gameId = String(request.gameId || "");
-  const allowedGames = ["word-search", "sudoku", "target"];
+  const allowedGames = ["word-search", "sudoku", "target", "forest-run", "station-pairs", "wellbeing-flight"];
   if (allowedGames.indexOf(gameId) < 0) throw new Error("Minijuego no permitido.");
-  const score = Math.max(0, Math.min(1000, Number(request.score) || 0));
+  const scoreLimits = { "word-search": 80, "sudoku": 120, "target": 200, "forest-run": 300, "station-pairs": 250, "wellbeing-flight": 300 };
+  const recordLimits = { "word-search": 80, "sudoku": 120, "target": 500, "forest-run": 5000, "station-pairs": 340, "wellbeing-flight": 500 };
+  const score = Math.max(0, Math.min(scoreLimits[gameId], Number(request.score) || 0));
+  const record = Math.max(0, Math.min(recordLimits[gameId], Number(request.record) || score));
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(4000)) throw new Error("Estamos guardando otros resultados. Intenta nuevamente en un momento.");
+  let bestScore = score;
+  let bestRecord = record;
   try {
     CacheService.getScriptCache().remove(bonusCacheKey_(user.Id));
     const current = findObjectsByField_(SHEETS.BONUS, "UsuarioId", user.Id, String).find(function (row) { return String(row.JuegoId) === gameId; });
-    if (current) updateObjectRow_(SHEETS.BONUS, current._row, { Puntaje: Math.max(Number(current.Puntaje) || 0, score), CompletadoEn: new Date() });
-    else appendObject_(SHEETS.BONUS, { Id: Utilities.getUuid(), UsuarioId: user.Id, JuegoId: gameId, Puntaje: score, CompletadoEn: new Date() });
+    if (current) {
+      const currentRecord = Number(current.Record) || Number(current.Puntaje) || 0;
+      bestScore = Math.max(Number(current.Puntaje) || 0, score);
+      bestRecord = Math.max(currentRecord, record);
+      updateObjectRow_(SHEETS.BONUS, current._row, { Puntaje: bestScore, Record: bestRecord, CompletadoEn: record > currentRecord ? new Date() : current.CompletadoEn || new Date() });
+    } else appendObject_(SHEETS.BONUS, { Id: Utilities.getUuid(), UsuarioId: user.Id, JuegoId: gameId, Puntaje: score, CompletadoEn: new Date(), Record: record });
   } finally { lock.releaseLock(); }
   invalidateUserActivity_(user.Id);
-  return { gameId: gameId, score: score, completed: true };
+  return { gameId: gameId, score: score, bestScore: bestScore, bestRecord: bestRecord, completed: true };
+}
+
+function bonusLeaderboardApi_(request) {
+  const currentUser = requireSession_(request.token);
+  let rows = cacheGet_(CACHE_KEYS.BONUS_LEADERBOARD);
+  if (!rows) {
+    const users = {};
+    sheetObjects_(SHEETS.USERS).filter(function (user) { return truthy_(user.Activo) && String(user.Rol) !== "ADMIN"; }).forEach(function (user) {
+      users[String(user.Id)] = { name: String(user.Nombre || "Participante"), uad: String(user.UAD || "") };
+    });
+    const rankedGames = ["forest-run", "station-pairs", "wellbeing-flight", "target"];
+    const bonus = sheetObjects_(SHEETS.BONUS).filter(function (row) { return users[String(row.UsuarioId)] && rankedGames.indexOf(String(row.JuegoId)) >= 0; });
+    rows = [];
+    rankedGames.forEach(function (gameId) {
+      bonus.filter(function (row) { return String(row.JuegoId) === gameId; }).sort(function (a, b) {
+        const aRecord = Number(a.Record) || Number(a.Puntaje) || 0;
+        const bRecord = Number(b.Record) || Number(b.Puntaje) || 0;
+        return bRecord - aRecord || new Date(a.CompletadoEn).getTime() - new Date(b.CompletadoEn).getTime();
+      }).slice(0, 10).forEach(function (row) {
+        const person = users[String(row.UsuarioId)];
+        rows.push({ userId: String(row.UsuarioId), gameId: gameId, name: person.name, uad: person.uad, record: Number(row.Record) || Number(row.Puntaje) || 0, completedAt: row.CompletadoEn ? new Date(row.CompletadoEn).toISOString() : "" });
+      });
+    });
+    cachePut_(CACHE_KEYS.BONUS_LEADERBOARD, rows, 60);
+  }
+  return { entries: rows.map(function (row) { return { gameId: row.gameId, name: row.name, uad: row.uad, record: row.record, completedAt: row.completedAt, isCurrent: String(row.userId) === String(currentUser.Id) }; }), updatedAt: new Date().toISOString() };
 }
 
 function adminCreateMissionApi_(request) {
@@ -525,6 +564,7 @@ function adminEditUserApi_(request) {
     cacheUser_(updated);
   } finally { lock.releaseLock(); }
   invalidateAdminDashboard_();
+  CacheService.getScriptCache().remove(CACHE_KEYS.BONUS_LEADERBOARD);
   return { user: { id: String(user.Id), name: name, cedula: cedula, phone: phone, email: email, cargo: cargo, uad: uad } };
 }
 
@@ -543,6 +583,7 @@ function adminDeleteUserApi_(request) {
   revokeUserSessions_(user.Id);
   invalidateUserCache_(user);
   invalidateAdminDashboard_();
+  CacheService.getScriptCache().remove(CACHE_KEYS.BONUS_LEADERBOARD);
   return { userId: String(user.Id), deleted: true };
 }
 
@@ -572,8 +613,12 @@ function userBundle_(user) {
   }).map(publicMission_) : [];
   const bonusRows = bonusForUser_(user.Id);
   const bonusScores = {};
-  bonusRows.forEach(function (row) { bonusScores[String(row.JuegoId)] = Number(row.Puntaje) || 0; });
-  return { user: publicUser_(user), missions: missions.map(publicMission_), historyMissions: historyMissions, completed: completed, started: started, history: history, bonusCompleted: Object.keys(bonusScores), bonusScores: bonusScores, badgeDefinitions: activeBadges_() };
+  const bonusRecords = {};
+  bonusRows.forEach(function (row) {
+    bonusScores[String(row.JuegoId)] = Number(row.Puntaje) || 0;
+    bonusRecords[String(row.JuegoId)] = Number(row.Record) || Number(row.Puntaje) || 0;
+  });
+  return { user: publicUser_(user), missions: missions.map(publicMission_), historyMissions: historyMissions, completed: completed, started: started, history: history, bonusCompleted: Object.keys(bonusScores), bonusScores: bonusScores, bonusRecords: bonusRecords, badgeDefinitions: activeBadges_() };
 }
 
 function buildAdminPeople_() {
@@ -873,7 +918,7 @@ function activityRowsForUser_(sheetName, userId, keyBuilder) {
 }
 
 function invalidateUserActivity_(userId) {
-  CacheService.getScriptCache().removeAll([progressCacheKey_(userId), bonusCacheKey_(userId), CACHE_KEYS.ADMIN_DASHBOARD]);
+  CacheService.getScriptCache().removeAll([progressCacheKey_(userId), bonusCacheKey_(userId), CACHE_KEYS.ADMIN_DASHBOARD, CACHE_KEYS.BONUS_LEADERBOARD]);
 }
 
 function invalidateMissionCaches_() {
@@ -1110,7 +1155,7 @@ function seedBadges_() {
     ["first-stamp", "Primer sello", "Completaste tu primera misión.", "star", "#c3010a", "#f337a2", "MISSIONS", 1, "", 10],
     ["route-keeper", "Guardián de la ruta", "Visitaste tres estaciones diferentes.", "shield", "#0c75c9", "#4ab2fb", "STATIONS", 3, "", 20],
     ["bonus-explorer", "Explorador bonus", "Superaste tu primer minijuego.", "rocket", "#f0a800", "#ffc845", "BONUS", 1, "", 30],
-    ["bright-mind", "Mente brillante", "Completaste los tres retos bonus.", "sparkle", "#d92591", "#f337a2", "BONUS", 3, "", 40],
+    ["bright-mind", "Mente brillante", "Completaste los seis retos bonus.", "sparkle", "#d92591", "#f337a2", "BONUS", 6, "", 40],
     ["point-collector", "Coleccionista", "Alcanzaste 500 puntos en tu recorrido.", "medal", "#249c64", "#43d17d", "POINTS", 500, "", 50],
     ["festival-ambassador", "Embajador del Festival", "Sellaste todas las misiones de tu pasaporte.", "trophy", "#12335a", "#4ab2fb", "ALL_MISSIONS", 1, "", 60],
   ];
@@ -1140,6 +1185,13 @@ function migrateDefaultBadgeDesigns_() {
     changed = true;
   });
   if (changed) invalidateBadgeCaches_();
+}
+
+function migrateExpandedBonusBadge_() {
+  const badge = sheetObjects_(SHEETS.BADGES).find(function (row) { return String(row.Id) === "bright-mind" && Number(row.Meta) === 3 && String(row.Descripcion) === "Completaste los tres retos bonus."; });
+  if (!badge) return;
+  updateObjectRow_(SHEETS.BADGES, badge._row, { Descripcion: "Completaste los seis retos bonus.", Meta: 6, EditadaEn: new Date() });
+  invalidateBadgeCaches_();
 }
 
 function cacheGet_(key) {

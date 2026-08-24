@@ -1,5 +1,7 @@
 # Actualización segura a Pasaporte Seguro 3.2
 
+> Revisión 3.2.13: se añaden Carrera del Bosque, Parejas del Festival y Vuelo del Bienestar. Los juegos cuentan con dificultad progresiva, controles táctiles y de teclado, récord personal y un Salón de récords global cargado únicamente al abrir Bonus. La hoja `Bonus` incorpora la columna `Record`, por lo que es obligatorio ejecutar una vez `setupPasaporteSeguro()` después de reemplazar Apps Script.
+
 > Revisión 3.2.12: zona Bonus más desafiante y dinámica. La sopa de letras ahora genera un tablero 10×10 distinto en cada partida, el sudoku pasa a 9×9 con solución única y el tiro al blanco incorpora 35 segundos, cinco dardos, selección de dirección y altura mediante dos puntos oscilantes y puntaje por cercanía al centro. Los juegos se procesan localmente y solo guardan el resultado final para no aumentar la carga del servidor.
 
 > Revisión 3.2.11: recuperación de contraseña separada en tres pasos obligatorios: solicitar el código, validarlo y crear la contraseña. Apps Script genera un comprobante temporal de 10 minutos únicamente después de verificar el código y bloquea el cambio de contraseña cuando ese comprobante falta o vence. Conserva todas las mejoras visuales del certificado 3.2.10.

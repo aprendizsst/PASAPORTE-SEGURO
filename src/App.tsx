@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import type { BonusGameId } from "./MiniGames";
+import type { BonusGameId, BonusLeaderboardEntry } from "./MiniGames";
 import { BadgeCollection, BadgeIcon, buildBadges, FestivalRoute, FinalPassportCard } from "./FestivalExperience";
 import type { BadgeDefinition } from "./FestivalExperience";
 
@@ -15,7 +15,7 @@ type AvatarConfig = { skin: number; hair: number; style: number; shirt: number; 
 type PersonProgress = { id: string; name: string; cedula: string; phone?: string; email: string; cargo?: string; uad: string; completed: number; total: number; points: number; createdAt?: string };
 type EvidencePayload = { name: string; mime: string; data: string; size: number };
 type AdminEvidence = { id: string; userName: string; missionTitle: string; fileName: string; mime: string; size: number; url: string; status: string; createdAt: string };
-type SessionBundle = { user: User; missions: Mission[]; historyMissions?: Mission[]; completed: number[]; started?: number[]; history?: Record<number, string>; adminPeople?: PersonProgress[]; adminEvidence?: AdminEvidence[]; badgeDefinitions?: BadgeDefinition[]; bonusCompleted?: string[]; bonusScores?: Record<string, number>; token: string };
+type SessionBundle = { user: User; missions: Mission[]; historyMissions?: Mission[]; completed: number[]; started?: number[]; history?: Record<number, string>; adminPeople?: PersonProgress[]; adminEvidence?: AdminEvidence[]; badgeDefinitions?: BadgeDefinition[]; bonusCompleted?: string[]; bonusScores?: Record<string, number>; bonusRecords?: Record<string, number>; token: string };
 type StoredSession = { savedAt: number; bundle: SessionBundle };
 
 const stations = [
@@ -80,6 +80,12 @@ const demoPeople = [
   { id: "demo-3", name: "Laura Moreno", cedula: "1030303030", email: "laura@empresa.com", uad: "UAD Chiquinquirá", completed: 3, total: 5, points: 350 },
   { id: "demo-4", name: "Mateo Rojas", cedula: "1040404040", email: "mateo@empresa.com", uad: "UAD Miraflores", completed: 2, total: 4, points: 220 },
   { id: "demo-5", name: "Luna Castro", cedula: "1050505050", email: "luna@empresa.com", uad: "Sede Central", completed: 5, total: 6, points: 590 },
+];
+const demoBonusLeaderboard: BonusLeaderboardEntry[] = [
+  { gameId: "forest-run", name: "Samuel Torres", uad: "UAD Duitama", record: 684, completedAt: "2026-08-24T14:20:00.000Z" },
+  { gameId: "forest-run", name: "Luna Castro", uad: "Sede Central", record: 521, completedAt: "2026-08-24T15:05:00.000Z" },
+  { gameId: "station-pairs", name: "Laura Moreno", uad: "UAD Chiquinquirá", record: 238, completedAt: "2026-08-24T15:18:00.000Z" },
+  { gameId: "wellbeing-flight", name: "Mateo Rojas", uad: "UAD Miraflores", record: 14, completedAt: "2026-08-24T16:02:00.000Z" },
 ];
 
 declare global {
@@ -165,7 +171,7 @@ async function callApi(action: string, payload: Record<string, unknown> = {}) {
   const url = apiUrlOrThrow();
   const requestId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const policy = apiPolicy(action, payload);
-  const inflightKey = action === "catalogs" ? "catalogs" : action === "session" ? `session:${String(payload.token || "")}` : "";
+  const inflightKey = action === "catalogs" ? "catalogs" : action === "session" ? `session:${String(payload.token || "")}` : action === "getBonusLeaderboard" ? `bonus-leaderboard:${String(payload.token || "")}` : "";
 
   const request = async () => {
     let lastError: unknown;
@@ -338,12 +344,16 @@ export default function Home() {
   const [busyAction, setBusyAction] = useState("");
   const [bonusCompleted, setBonusCompleted] = useState<string[]>([]);
   const [bonusScores, setBonusScores] = useState<Record<string, number>>({});
+  const [bonusRecords, setBonusRecords] = useState<Record<string, number>>({});
+  const [bonusLeaderboard, setBonusLeaderboard] = useState<BonusLeaderboardEntry[]>([]);
+  const [bonusLeaderboardLoading, setBonusLeaderboardLoading] = useState(false);
   const [adminDashboardLoaded, setAdminDashboardLoaded] = useState(false);
   const [connectionOpen, setConnectionOpen] = useState(false);
   const [connectionUrl, setConnectionUrl] = useState(() => getApiUrl());
   const [connectionStatus, setConnectionStatus] = useState<"idle" | "testing" | "ready" | "error">("idle");
   const [connectionMessage, setConnectionMessage] = useState("");
   const catalogsRequested = useRef(false);
+  const bonusLeaderboardLoaded = useRef(false);
   const visibleMissions = useMemo(() => user ? missions.filter((m) => m.audience === "Todas las UAD" || m.audience === user.uad) : [], [missions, user]);
   const filteredMissions = missionFilter === "Todas" ? visibleMissions : visibleMissions.filter((m) => m.station === missionFilter);
   const completedVisible = visibleMissions.filter((m) => completed.includes(m.id));
@@ -403,13 +413,19 @@ export default function Home() {
       history: historyDates,
       bonusCompleted,
       bonusScores,
+      bonusRecords,
       badgeDefinitions,
       token: sessionToken,
       ...(adminDashboardLoaded ? { adminPeople } : {}),
       ...(adminDashboardLoaded ? { adminEvidence } : {}),
     };
     localStorage.setItem(SESSION_BUNDLE_KEY, JSON.stringify({ savedAt: Date.now(), bundle } satisfies StoredSession));
-  }, [adminDashboardLoaded, adminEvidence, adminPeople, badgeDefinitions, bonusCompleted, bonusScores, completed, historyDates, historyMissions, missions, sessionToken, started, user]);
+  }, [adminDashboardLoaded, adminEvidence, adminPeople, badgeDefinitions, bonusCompleted, bonusRecords, bonusScores, completed, historyDates, historyMissions, missions, sessionToken, started, user]);
+
+  useEffect(() => {
+    if (view !== "bonus" || !user || !sessionToken) return;
+    void loadBonusLeaderboard();
+  }, [sessionToken, user, view]);
 
   function notify(message: string) { setToast(message); window.setTimeout(() => setToast(""), 2800); }
   function applyBundle(data: SessionBundle, persist = true) {
@@ -424,6 +440,7 @@ export default function Home() {
     setBadgeDefinitions(data.badgeDefinitions || []);
     setBonusCompleted(data.bonusCompleted || []);
     setBonusScores(data.bonusScores || {});
+    setBonusRecords(data.bonusRecords || data.bonusScores || {});
     setSessionToken(data.token);
     setAdminDashboardLoaded(Array.isArray(data.adminPeople));
     localStorage.setItem("pasaporte_session", data.token);
@@ -752,19 +769,45 @@ export default function Home() {
     }
     finally { setBusyAction(""); }
   }
-  async function completeBonus(gameId: BonusGameId, score: number) {
-    if (bonusCompleted.includes(gameId) || busyAction) return;
+  async function loadBonusLeaderboard(force = false) {
+    if (!user || !sessionToken || (bonusLeaderboardLoaded.current && !force)) return;
+    bonusLeaderboardLoaded.current = true;
+    setBonusLeaderboardLoading(true);
+    try {
+      if (getApiUrl()) {
+        const data = await callApi("getBonusLeaderboard", { token: sessionToken }) as { entries?: BonusLeaderboardEntry[] };
+        setBonusLeaderboard(data.entries || []);
+      } else setBonusLeaderboard(demoBonusLeaderboard);
+    } catch {
+      bonusLeaderboardLoaded.current = false;
+      if (!bonusLeaderboard.length) setBonusLeaderboard(demoBonusLeaderboard);
+    } finally { setBonusLeaderboardLoading(false); }
+  }
+  async function completeBonus(gameId: BonusGameId, score: number, record = score) {
+    if (busyAction) return;
     const previousCompleted = bonusCompleted;
     const previousScores = bonusScores;
+    const previousRecords = bonusRecords;
     setBonusCompleted((current) => current.includes(gameId) ? current : [...current, gameId]);
-    setBonusScores((current) => ({ ...current, [gameId]: score }));
+    setBonusScores((current) => ({ ...current, [gameId]: Math.max(current[gameId] || 0, score) }));
+    setBonusRecords((current) => ({ ...current, [gameId]: Math.max(current[gameId] || 0, record) }));
     setBusyAction(`bonus-${gameId}`);
     try {
-      if (getApiUrl()) await callApi("completeBonus", { token: sessionToken, gameId, score });
-      notify(`¡Bonus completado! Sumaste ${score} puntos.`);
+      let bestScore = Math.max(previousScores[gameId] || 0, score);
+      let bestRecord = Math.max(previousRecords[gameId] || 0, record);
+      if (getApiUrl()) {
+        const data = await callApi("completeBonus", { token: sessionToken, gameId, score, record }) as { bestScore?: number; bestRecord?: number };
+        bestScore = Number(data.bestScore) || bestScore;
+        bestRecord = Number(data.bestRecord) || bestRecord;
+      }
+      setBonusScores((current) => ({ ...current, [gameId]: bestScore }));
+      setBonusRecords((current) => ({ ...current, [gameId]: bestRecord }));
+      notify(record > (previousRecords[gameId] || 0) ? `¡Nuevo récord! Sumaste hasta ${bestScore} puntos.` : "Resultado guardado. Tu mejor récord se conserva.");
+      void loadBonusLeaderboard(true);
     } catch (error) {
       setBonusCompleted(previousCompleted);
       setBonusScores(previousScores);
+      setBonusRecords(previousRecords);
       notify(error instanceof Error ? error.message : "No fue posible guardar el bonus.");
     }
     finally { setBusyAction(""); }
@@ -777,7 +820,7 @@ export default function Home() {
       localStorage.removeItem("pasaporte_session");
       localStorage.removeItem(SESSION_BUNDLE_KEY);
       setSessionToken(""); setUser(null); setOpened(false); setView("dashboard");
-      setBonusCompleted([]); setBonusScores({}); setSessionClosing(false);
+      setBonusCompleted([]); setBonusScores({}); setBonusRecords({}); setBonusLeaderboard([]); bonusLeaderboardLoaded.current = false; setSessionClosing(false);
       setAdminDashboardLoaded(false);
     }, 900);
   }
@@ -818,7 +861,7 @@ export default function Home() {
           <div className="mission-grid">{filteredMissions.map((m) => { const done = completed.includes(m.id), active = started.includes(m.id), isStarting = busyAction === `start-${m.id}`; return <article className={`mission-card ${done ? "completed" : ""}`} key={m.id} style={{ "--station": m.color } as React.CSSProperties}><div className="mission-top"><span className="station-icon"><StationIcon station={m.station} /></span><span className="mission-status">{done ? "✓ SELLADA" : active ? "● EN CURSO" : "DISPONIBLE"}</span></div><p className="station-name">{m.station}</p><h3>{m.title}</h3><p>{m.description}</p><div className="mission-meta"><span><UiIcon name="clock" /> {m.duration}</span><span><UiIcon name="sparkle" /> {m.points} pts</span><span><UiIcon name="pin" /> {m.audience}</span>{m.evidenceRequired && <span><UiIcon name="camera" /> Evidencia requerida</span>}</div>{done ? <button className="mission-button done-button" disabled>Pasaporte sellado <UiIcon name="check" /></button> : active ? <button className="mission-button" onClick={() => requestMissionSeal(m)}>Validar y sellar <UiIcon name="check" /></button> : <button className="mission-button outline" disabled={isStarting} onClick={() => startMission(m.id)}>{isStarting ? <><LoadingDot /> Iniciando...</> : <>Iniciar misión <UiIcon name="play" /></>}</button>}</article> })}</div>
         </div>}
 
-        {view === "bonus" && <Suspense fallback={<div className="page-content lazy-page-loader"><LoadingDot /><b>Preparando la zona bonus...</b></div>}><MiniGamesPage completed={bonusCompleted} scores={bonusScores} busy={busyAction} onComplete={completeBonus} /></Suspense>}
+        {view === "bonus" && <Suspense fallback={<div className="page-content lazy-page-loader"><LoadingDot /><b>Preparando la zona bonus...</b></div>}><MiniGamesPage completed={bonusCompleted} scores={bonusScores} records={bonusRecords} leaderboard={bonusLeaderboard} leaderboardLoading={bonusLeaderboardLoading} busy={busyAction} onRefreshLeaderboard={() => loadBonusLeaderboard(true)} onComplete={completeBonus} /></Suspense>}
 
         {view === "badges" && featureEnabled("badges") && <BadgeCollection badges={badges} onExplore={() => turnTo("missions")} />}
 

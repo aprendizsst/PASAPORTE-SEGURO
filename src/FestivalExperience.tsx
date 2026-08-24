@@ -45,7 +45,7 @@ const defaultBadgeDefinitions: BadgeDefinition[] = [
   { id: "first-stamp", title: "Primer sello", description: "Completaste tu primera misión.", icon: "star", primaryColor: "#c3010a", secondaryColor: "#f337a2", criterion: "MISSIONS", goal: 1 },
   { id: "route-keeper", title: "Guardián de la ruta", description: "Visitaste tres estaciones diferentes.", icon: "shield", primaryColor: "#0c75c9", secondaryColor: "#4ab2fb", criterion: "STATIONS", goal: 3 },
   { id: "bonus-explorer", title: "Explorador bonus", description: "Superaste tu primer minijuego.", icon: "rocket", primaryColor: "#f0a800", secondaryColor: "#ffc845", criterion: "BONUS", goal: 1 },
-  { id: "bright-mind", title: "Mente brillante", description: "Completaste los tres retos bonus.", icon: "sparkle", primaryColor: "#d92591", secondaryColor: "#f337a2", criterion: "BONUS", goal: 3 },
+  { id: "bright-mind", title: "Mente brillante", description: "Completaste los seis retos bonus.", icon: "sparkle", primaryColor: "#d92591", secondaryColor: "#f337a2", criterion: "BONUS", goal: 6 },
   { id: "point-collector", title: "Coleccionista", description: "Alcanzaste 500 puntos en tu recorrido.", icon: "medal", primaryColor: "#249c64", secondaryColor: "#43d17d", criterion: "POINTS", goal: 500 },
   { id: "festival-ambassador", title: "Embajador del Festival", description: "Sellaste todas las misiones de tu pasaporte.", icon: "trophy", primaryColor: "#12335a", secondaryColor: "#4ab2fb", criterion: "ALL_MISSIONS", goal: 1 },
 ];
