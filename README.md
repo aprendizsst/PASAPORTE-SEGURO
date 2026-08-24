@@ -11,7 +11,7 @@ Versión completa de la aplicación web para GitHub Pages y Google Apps Script. 
 - Pestaña Bonus con sopa de letras, sudoku seguro y tiro al blanco.
 - **Ruta Viva del Festival 3D** con las seis islas siempre visibles —incluida Ambiental—, nave espacial, avatar visible en la cabina y acceso filtrado a las misiones de cada estación.
 - Colección de insignias administrable: creación, edición, retiro, 10 iconos, dos colores, criterios y metas configurables.
-- Certificado personalizado en PDF, con avatar, sellos y logos integrados, generado directamente en el dispositivo.
+- Certificado A4 personalizado en PDF, con diseño editorial, avatar refinado, textos adaptables, sellos y logos integrados, generado directamente en el dispositivo.
 - Sellado protegido por código único de misión y carga opcional u obligatoria de fotos o videos como evidencia.
 - Portada dinámica con profundidad, brillo, acentos institucionales y acceso compatible con mouse, teclado y pantallas táctiles.
 - Reporte administrativo CSV y actualización manual de estadísticas.

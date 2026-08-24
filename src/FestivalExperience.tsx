@@ -219,19 +219,24 @@ export function FinalPassportCard({ name, uad, cedula, avatar, points, missions,
       drawCardBackground(ctx, canvas.width, canvas.height);
       await drawCardLogos(ctx);
       ctx.textAlign = "center";
-      ctx.fillStyle = "#6b51bd"; ctx.font = "700 25px Arial"; ctx.fillText("PASAPORTE SEGURO · FESTIVAL 2026", 620, 205);
-      ctx.fillStyle = "#15294c"; ctx.font = "900 76px Arial"; ctx.fillText("¡RUTA COMPLETADA!", 620, 300);
-      ctx.fillStyle = "#66758d"; ctx.font = "400 25px Arial"; ctx.fillText("Una aventura de autocuidado, diversidad y bienestar.", 620, 354);
-      drawAvatarMedallion(ctx, avatar, 420, 555, 160);
-      drawCardSeal(ctx, 820, 555);
-      ctx.fillStyle = "#6d7890"; ctx.font = "700 21px Arial"; ctx.fillText("CERTIFICADO PARA", 620, 755);
-      ctx.fillStyle = "#172b4d"; ctx.font = "900 55px Arial"; fitText(ctx, name.toUpperCase(), 620, 825, 980);
-      ctx.fillStyle = "#087f8c"; ctx.font = "600 26px Arial"; fitText(ctx, `${uad} · PASAPORTE Nº ${cedula.slice(-6).padStart(6, "0")}`, 620, 875, 1020);
+      drawCertificatePill(ctx, 620, 166, 220, 46, "EDICIÓN 2026", "#12335a", "#ffffff");
+      ctx.fillStyle = "#12335a"; ctx.font = "900 24px Arial"; ctx.fillText("PASAPORTE SEGURO", 620, 244);
+      ctx.fillStyle = "#c3010a"; ctx.fillRect(510, 266, 220, 5);
+      ctx.fillStyle = "#12335a"; ctx.font = "900 60px Arial"; ctx.fillText("CERTIFICADO DE TRAVESÍA", 620, 352);
+      ctx.fillStyle = "#60738d"; ctx.font = "400 23px Arial"; ctx.fillText("Un reconocimiento a quienes hacen del autocuidado una forma de avanzar juntos.", 620, 399);
+      ctx.fillStyle = "#6b7890"; ctx.font = "800 18px Arial"; ctx.fillText("SE RECONOCE A", 620, 488);
+      ctx.fillStyle = "#10284b";
+      drawAdaptiveText(ctx, name.toUpperCase(), 620, 560, 980, 64, 34, 2, 1.04, "900");
+      drawCertificatePill(ctx, 620, 687, 720, 54, `${uad.toUpperCase()}  ·  PASAPORTE Nº ${cedula.slice(-6).padStart(6, "0")}`, "#eef8fb", "#087f8c");
+      drawAvatarMedallion(ctx, avatar, 355, 885, 142);
+      drawCardSeal(ctx, 885, 885);
+      ctx.fillStyle = "#53677f"; ctx.font = "italic 500 23px Georgia";
+      drawAdaptiveText(ctx, "Por completar una ruta de bienestar, diversidad, seguridad y propósito.", 620, 1065, 900, 25, 19, 2, 1.28, "italic 500", "Georgia");
       const completedMissions = missions.filter((mission) => completed.includes(mission.id));
       drawCardStats(ctx, points, completedMissions.length, unlocked.length);
       drawCardStamps(ctx, completedMissions);
-      ctx.fillStyle = "#66758d"; ctx.font = "500 21px Arial"; ctx.fillText("Juntos hacemos del trabajo un lugar más seguro, saludable y feliz.", 620, 1545);
-      ctx.fillStyle = "#087f8c"; ctx.font = "700 19px Arial"; ctx.fillText("DE MÍ · PARA MÍ  ·  MUNDO DEL AUTOCUIDADO", 620, 1600);
+      ctx.fillStyle = "#4d6078"; ctx.font = "600 20px Arial"; ctx.fillText("Juntos hacemos del trabajo un lugar más seguro, saludable y feliz.", 620, 1578);
+      ctx.fillStyle = "#c3010a"; ctx.font = "900 17px Arial"; ctx.fillText("LISTO PARA VIAJAR POR EL MUNDO DEL AUTOCUIDADO", 620, 1623);
       const blob = await canvasToPdfBlob(canvas);
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
@@ -282,92 +287,117 @@ function parseAvatarConfig(value: string) {
 
 function drawCardBackground(ctx: CanvasRenderingContext2D, width: number, height: number) {
   const gradient = ctx.createLinearGradient(0, 0, width, height);
-  gradient.addColorStop(0, "#ffffff"); gradient.addColorStop(.5, "#f7fbff"); gradient.addColorStop(1, "#f5f0ff");
+  gradient.addColorStop(0, "#fffdf8"); gradient.addColorStop(.46, "#ffffff"); gradient.addColorStop(1, "#eef8ff");
   ctx.fillStyle = gradient; ctx.fillRect(0, 0, width, height);
-  const glowA = ctx.createRadialGradient(120, 130, 0, 120, 130, 430); glowA.addColorStop(0, "rgba(157,92,255,.2)"); glowA.addColorStop(1, "rgba(157,92,255,0)"); ctx.fillStyle = glowA; ctx.fillRect(0, 0, width, height);
-  const glowB = ctx.createRadialGradient(1120, 720, 0, 1120, 720, 500); glowB.addColorStop(0, "rgba(18,207,224,.18)"); glowB.addColorStop(1, "rgba(18,207,224,0)"); ctx.fillStyle = glowB; ctx.fillRect(0, 0, width, height);
-  ctx.fillStyle = "rgba(18,207,224,.08)"; ctx.beginPath(); ctx.arc(1140, 90, 180, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = "rgba(255,92,155,.07)"; ctx.beginPath(); ctx.arc(90, 1660, 230, 0, Math.PI * 2); ctx.fill();
-  roundRect(ctx, 82, 390, 1076, 365, 45); ctx.fillStyle = "rgba(255,255,255,.7)"; ctx.fill(); ctx.strokeStyle = "rgba(50,73,114,.1)"; ctx.lineWidth = 2; ctx.stroke();
-  roundRect(ctx, 45, 45, width - 90, height - 90, 38); ctx.strokeStyle = "#12b8c8"; ctx.lineWidth = 4; ctx.stroke();
-  roundRect(ctx, 65, 65, width - 130, height - 130, 30); ctx.strokeStyle = "rgba(107,81,189,.16)"; ctx.lineWidth = 2; ctx.stroke();
+  const glowA = ctx.createRadialGradient(70, 70, 0, 70, 70, 440); glowA.addColorStop(0, "rgba(243,55,162,.13)"); glowA.addColorStop(1, "rgba(243,55,162,0)"); ctx.fillStyle = glowA; ctx.fillRect(0, 0, width, height);
+  const glowB = ctx.createRadialGradient(1180, 980, 0, 1180, 980, 620); glowB.addColorStop(0, "rgba(74,178,251,.16)"); glowB.addColorStop(1, "rgba(74,178,251,0)"); ctx.fillStyle = glowB; ctx.fillRect(0, 0, width, height);
+
+  ctx.save(); ctx.globalAlpha = .36; ctx.strokeStyle = "#4ab2fb"; ctx.lineWidth = 2;
+  for (let radius = 90; radius <= 330; radius += 45) { ctx.beginPath(); ctx.arc(1120, 170, radius, .55, Math.PI * 1.6); ctx.stroke(); }
+  ctx.restore();
+  ctx.save(); ctx.strokeStyle = "rgba(18,51,90,.12)"; ctx.lineWidth = 2; ctx.setLineDash([7, 12]); ctx.beginPath(); ctx.moveTo(110, 1310); ctx.bezierCurveTo(280, 1245, 430, 1395, 620, 1315); ctx.bezierCurveTo(820, 1230, 950, 1390, 1120, 1312); ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+
+  ctx.fillStyle = "#c3010a"; ctx.fillRect(0, 0, 18, height);
+  ctx.fillStyle = "#f337a2"; ctx.fillRect(18, 0, 12, height);
+  ctx.fillStyle = "#4ab2fb"; ctx.fillRect(30, 0, 8, height);
+  ctx.fillStyle = "#ffc845"; ctx.fillRect(38, 0, 5, height);
+
+  ctx.save(); ctx.globalAlpha = .92;
+  ctx.fillStyle = "#12335a"; ctx.beginPath(); ctx.moveTo(840, 0); ctx.lineTo(width, 0); ctx.lineTo(width, 34); ctx.lineTo(900, 34); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#4ab2fb"; ctx.beginPath(); ctx.moveTo(930, 34); ctx.lineTo(width, 34); ctx.lineTo(width, 54); ctx.lineTo(965, 54); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#f337a2"; ctx.beginPath(); ctx.moveTo(0, 1687); ctx.lineTo(360, 1687); ctx.lineTo(300, 1714); ctx.lineTo(0, 1714); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#ffc845"; ctx.beginPath(); ctx.moveTo(0, 1714); ctx.lineTo(260, 1714); ctx.lineTo(220, 1730); ctx.lineTo(0, 1730); ctx.closePath(); ctx.fill(); ctx.restore();
+
+  roundRect(ctx, 70, 75, width - 140, height - 150, 34); ctx.fillStyle = "rgba(255,255,255,.58)"; ctx.fill(); ctx.strokeStyle = "rgba(18,51,90,.14)"; ctx.lineWidth = 2; ctx.stroke();
+  roundRect(ctx, 84, 89, width - 168, height - 178, 27); ctx.strokeStyle = "rgba(74,178,251,.22)"; ctx.lineWidth = 2; ctx.stroke();
+  roundRect(ctx, 116, 438, 1008, 665, 34); ctx.fillStyle = "rgba(255,255,255,.84)"; ctx.shadowColor = "rgba(18,51,90,.12)"; ctx.shadowBlur = 30; ctx.shadowOffsetY = 14; ctx.fill(); ctx.shadowColor = "transparent"; ctx.strokeStyle = "rgba(18,51,90,.09)"; ctx.lineWidth = 2; ctx.stroke();
 }
 
 async function drawCardLogos(ctx: CanvasRenderingContext2D) {
   const [jer, program] = await Promise.all([loadImage("./assets/jer-logo.webp"), loadImage("./assets/de-mi-para-mi.webp")]);
-  if (jer) drawContainedImage(ctx, removeLightBackground(jer), 86, 72, 170, 92);
-  if (program) drawContainedImage(ctx, removeLightBackground(program), 872, 72, 240, 88);
+  if (jer) drawContainedImage(ctx, removeLightBackground(jer), 105, 105, 145, 82);
+  if (program) drawContainedImage(ctx, removeLightBackground(program), 940, 105, 190, 76);
 }
 
 function drawCardSeal(ctx: CanvasRenderingContext2D, x: number, y: number) {
-  const gradient = ctx.createRadialGradient(x - 35, y - 50, 15, x, y, 150);
-  gradient.addColorStop(0, "#ffd85a"); gradient.addColorStop(.5, "#9d5cff"); gradient.addColorStop(1, "#4a2a9e");
-  ctx.fillStyle = gradient; ctx.beginPath(); ctx.arc(x, y, 138, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 7; ctx.setLineDash([10, 10]); ctx.beginPath(); ctx.arc(x, y, 115, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
-  ctx.fillStyle = "#ffffff"; ctx.textAlign = "center"; ctx.font = "900 92px Arial"; ctx.fillText("✓", x, y + 12);
-  ctx.font = "800 24px Arial"; ctx.fillText("PASAPORTE COMPLETO", x, y + 69);
+  ctx.save(); ctx.shadowColor = "rgba(195,1,10,.24)"; ctx.shadowBlur = 28; ctx.shadowOffsetY = 12;
+  const gradient = ctx.createLinearGradient(x - 120, y - 120, x + 120, y + 120);
+  gradient.addColorStop(0, "#c3010a"); gradient.addColorStop(.54, "#f337a2"); gradient.addColorStop(1, "#7a3bc5");
+  ctx.fillStyle = gradient; ctx.beginPath(); ctx.arc(x, y, 124, 0, Math.PI * 2); ctx.fill(); ctx.shadowColor = "transparent";
+  ctx.strokeStyle = "rgba(255,255,255,.92)"; ctx.lineWidth = 5; ctx.setLineDash([8, 10]); ctx.beginPath(); ctx.arc(x, y, 103, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+  ctx.strokeStyle = "rgba(255,200,69,.9)"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, 114, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = "#ffffff"; ctx.textAlign = "center"; ctx.font = "900 66px Arial"; ctx.fillText("✓", x, y - 10);
+  ctx.font = "900 23px Arial"; ctx.fillText("RUTA", x, y + 35); ctx.fillText("COMPLETA", x, y + 62);
+  ctx.font = "700 12px Arial"; ctx.fillStyle = "#fff1be"; ctx.fillText("FESTIVAL 2026", x, y + 82); ctx.restore();
 }
 
 function drawAvatarMedallion(ctx: CanvasRenderingContext2D, value: string, x: number, y: number, radius: number) {
   const colors = parseAvatarColors(value);
   const config = parseAvatarConfig(value);
   ctx.save();
-  const aura = ctx.createRadialGradient(x - 40, y - 55, 20, x, y, radius + 42); aura.addColorStop(0, "rgba(255,255,255,.95)"); aura.addColorStop(.18, "rgba(93,226,232,.78)"); aura.addColorStop(.55, "rgba(157,92,255,.45)"); aura.addColorStop(1, "rgba(157,92,255,0)"); ctx.fillStyle = aura; ctx.beginPath(); ctx.arc(x, y, radius + 42, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowColor = "rgba(18,51,90,.2)"; ctx.shadowBlur = 28; ctx.shadowOffsetY = 12; ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(x, y, radius + 16, 0, Math.PI * 2); ctx.fill(); ctx.shadowColor = "transparent";
+  const aura = ctx.createLinearGradient(x - radius, y - radius, x + radius, y + radius); aura.addColorStop(0, "#4ab2fb"); aura.addColorStop(.5, "#ffffff"); aura.addColorStop(1, "#f337a2"); ctx.strokeStyle = aura; ctx.lineWidth = 8; ctx.beginPath(); ctx.arc(x, y, radius + 10, 0, Math.PI * 2); ctx.stroke();
   ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.clip();
-  const sky = ctx.createLinearGradient(x - radius, y - radius, x + radius, y + radius); sky.addColorStop(0, "#e9fbff"); sky.addColorStop(1, "#a8b8ff"); ctx.fillStyle = sky; ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
-  ctx.fillStyle = colors.shirt; ctx.beginPath(); ctx.ellipse(x, y + 138, 122, 104, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = colors.skin; roundRect(ctx, x - 26, y + 50, 52, 70, 18); ctx.fill();
+  const sky = ctx.createLinearGradient(x - radius, y - radius, x + radius, y + radius); sky.addColorStop(0, "#edfaff"); sky.addColorStop(.55, "#d9ebff"); sky.addColorStop(1, "#f7dff0"); ctx.fillStyle = sky; ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  ctx.fillStyle = "rgba(255,255,255,.45)"; ctx.beginPath(); ctx.arc(x - 80, y - 92, 54, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = shadeColor(colors.shirt, -12); ctx.beginPath(); ctx.ellipse(x, y + 156, 132, 110, 0, 0, Math.PI * 2); ctx.fill();
+  const shirtGlow = ctx.createLinearGradient(x - 90, y + 80, x + 90, y + 150); shirtGlow.addColorStop(0, colors.shirt); shirtGlow.addColorStop(1, shadeColor(colors.shirt, -28)); ctx.fillStyle = shirtGlow; ctx.beginPath(); ctx.ellipse(x, y + 145, 116, 96, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = colors.skin; roundRect(ctx, x - 24, y + 49, 48, 64, 17); ctx.fill();
   ctx.fillStyle = colors.hair;
-  if ([2, 5].includes(config.style)) { ctx.beginPath(); ctx.ellipse(x, y + 5, 100, 132, 0, 0, Math.PI * 2); ctx.fill(); }
-  else { ctx.beginPath(); ctx.ellipse(x, y - 22, 88, config.style === 1 ? 116 : 101, 0, 0, Math.PI * 2); ctx.fill(); }
-  if (config.style === 4) { ctx.beginPath(); ctx.arc(x + 50, y - 103, 38, 0, Math.PI * 2); ctx.fill(); }
-  if (config.style === 3) for (let index = 0; index < 9; index += 1) { const angle = Math.PI + index * Math.PI / 8; ctx.beginPath(); ctx.arc(x + Math.cos(angle) * 75, y - 16 + Math.sin(angle) * 84, 28, 0, Math.PI * 2); ctx.fill(); }
-  if (config.style === 6) { for (const side of [-1, 1]) for (let index = 0; index < 5; index += 1) { ctx.beginPath(); ctx.arc(x + side * 78, y + 12 + index * 27, 18, 0, Math.PI * 2); ctx.fill(); } }
-  const face = ctx.createRadialGradient(x - 35, y - 45, 12, x, y, 105); face.addColorStop(0, "#fff0e7"); face.addColorStop(.45, colors.skin); face.addColorStop(1, shadeColor(colors.skin, -24)); ctx.fillStyle = face; ctx.beginPath(); ctx.ellipse(x, y, 70, 91, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = colors.skin; ctx.beginPath(); ctx.arc(x - 70, y, 13, 0, Math.PI * 2); ctx.arc(x + 70, y, 13, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = colors.hair; ctx.beginPath(); ctx.ellipse(x - 8, y - 72, 72, config.style === 0 ? 34 : 42, -.08, Math.PI, Math.PI * 2); ctx.fill();
-  if (config.style === 5) { ctx.strokeStyle = shadeColor(colors.hair, 24); ctx.lineWidth = 5; for (let index = 0; index < 3; index += 1) { ctx.beginPath(); ctx.arc(x - 10 + index * 12, y - 76, 52 - index * 6, Math.PI * 1.08, Math.PI * 1.85); ctx.stroke(); } }
-  ctx.strokeStyle = shadeColor(colors.hair, -25); ctx.lineWidth = 5; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(x - 42, y - 27); ctx.lineTo(x - 18, y - 31); ctx.moveTo(x + 18, y - 31); ctx.lineTo(x + 42, y - 27); ctx.stroke();
-  ctx.fillStyle = "#263044"; ctx.beginPath(); ctx.arc(x - 25, y - 8, 5, 0, Math.PI * 2); ctx.arc(x + 25, y - 8, 5, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = "rgba(231,101,119,.18)"; ctx.beginPath(); ctx.ellipse(x - 48, y + 20, 13, 7, 0, 0, Math.PI * 2); ctx.ellipse(x + 48, y + 20, 13, 7, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = "rgba(91,56,46,.28)"; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(x, y - 2); ctx.quadraticCurveTo(x - 5, y + 12, x + 3, y + 13); ctx.stroke();
-  ctx.strokeStyle = "#a64d55"; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(x, y + 22, 24, .25, Math.PI - .25); ctx.stroke();
+  if ([1, 2, 5].includes(config.style)) { ctx.beginPath(); ctx.ellipse(x, y + 2, 92, 126, 0, 0, Math.PI * 2); ctx.fill(); }
+  else { ctx.beginPath(); ctx.ellipse(x, y - 18, 84, 100, 0, 0, Math.PI * 2); ctx.fill(); }
+  if (config.style === 4) { ctx.beginPath(); ctx.arc(x + 48, y - 93, 34, 0, Math.PI * 2); ctx.fill(); }
+  if (config.style === 3) for (let index = 0; index < 12; index += 1) { const angle = index * Math.PI / 6; ctx.beginPath(); ctx.arc(x + Math.cos(angle) * 72, y - 15 + Math.sin(angle) * 72, 24, 0, Math.PI * 2); ctx.fill(); }
+  if (config.style === 6) for (const side of [-1, 1]) for (let index = 0; index < 4; index += 1) { ctx.beginPath(); ctx.arc(x + side * 72, y + 16 + index * 25, 16, 0, Math.PI * 2); ctx.fill(); }
+  ctx.fillStyle = colors.skin; ctx.beginPath(); ctx.arc(x - 67, y + 1, 12, 0, Math.PI * 2); ctx.arc(x + 67, y + 1, 12, 0, Math.PI * 2); ctx.fill();
+  const face = ctx.createLinearGradient(x - 60, y - 70, x + 70, y + 90); face.addColorStop(0, shadeColor(colors.skin, 22)); face.addColorStop(.5, colors.skin); face.addColorStop(1, shadeColor(colors.skin, -18)); ctx.fillStyle = face; ctx.beginPath(); ctx.ellipse(x, y, 67, 88, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = colors.hair; ctx.beginPath(); ctx.ellipse(x - 7, y - 72, 70, config.style === 0 ? 31 : 39, -.08, Math.PI, Math.PI * 2); ctx.fill();
+  if (config.style === 5) { ctx.strokeStyle = shadeColor(colors.hair, 22); ctx.lineWidth = 4; for (let index = 0; index < 3; index += 1) { ctx.beginPath(); ctx.arc(x - 9 + index * 12, y - 74, 50 - index * 6, Math.PI * 1.08, Math.PI * 1.86); ctx.stroke(); } }
+  ctx.strokeStyle = shadeColor(colors.hair, -20); ctx.lineWidth = 4; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(x - 40, y - 28); ctx.quadraticCurveTo(x - 28, y - 34, x - 16, y - 29); ctx.moveTo(x + 16, y - 29); ctx.quadraticCurveTo(x + 28, y - 34, x + 40, y - 28); ctx.stroke();
+  ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.ellipse(x - 25, y - 8, 10, 7, 0, 0, Math.PI * 2); ctx.ellipse(x + 25, y - 8, 10, 7, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#273247"; ctx.beginPath(); ctx.arc(x - 25, y - 8, 4, 0, Math.PI * 2); ctx.arc(x + 25, y - 8, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "rgba(231,101,119,.14)"; ctx.beginPath(); ctx.ellipse(x - 45, y + 23, 12, 6, 0, 0, Math.PI * 2); ctx.ellipse(x + 45, y + 23, 12, 6, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "rgba(91,56,46,.25)"; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(x, y - 1); ctx.quadraticCurveTo(x - 4, y + 12, x + 3, y + 14); ctx.stroke();
+  ctx.strokeStyle = shadeColor(colors.skin, -45); ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(x, y + 24, 22, .32, Math.PI - .32); ctx.stroke();
+  ctx.strokeStyle = "rgba(255,255,255,.7)"; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(x - 45, y + 99); ctx.quadraticCurveTo(x, y + 68, x + 45, y + 99); ctx.stroke();
   drawAvatarAccessories(ctx, value, x, y);
-  ctx.restore(); ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 9; ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.stroke(); ctx.strokeStyle = "#5de2e8"; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(x, y, radius + 13, 0, Math.PI * 2); ctx.stroke();
+  ctx.restore();
 }
 
 function drawAvatarAccessories(ctx: CanvasRenderingContext2D, value: string, x: number, y: number) {
   const palette = ["#172440", "#9d5cff", "#12cfe0", "#ff5c9b", "#ffb703", "#43d17d", "#ffffff", "#e95454"];
   parseAvatarConfig(value).accessories.forEach(([id, colorIndex]) => {
-    const color = palette[colorIndex] || palette[0]; ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 6;
-    if (id === 1 || id === 2) { ctx.beginPath(); if (id === 1) { roundRect(ctx, x - 56, y - 29, 50, 42, 10); ctx.stroke(); roundRect(ctx, x + 6, y - 29, 50, 42, 10); ctx.stroke(); } else { ctx.arc(x - 31, y - 8, 25, 0, Math.PI * 2); ctx.arc(x + 31, y - 8, 25, 0, Math.PI * 2); ctx.stroke(); } ctx.beginPath(); ctx.moveTo(x - 6, y - 8); ctx.lineTo(x + 6, y - 8); ctx.stroke(); }
-    if (id === 3) { ctx.beginPath(); ctx.arc(x, y - 62, 75, Math.PI * 1.08, Math.PI * 1.92); ctx.stroke(); }
-    if (id === 4) { ctx.beginPath(); ctx.ellipse(x + 64, y - 73, 22, 12, .6, 0, Math.PI * 2); ctx.ellipse(x + 90, y - 80, 22, 12, -.6, 0, Math.PI * 2); ctx.fill(); }
-    if (id === 5) { ctx.beginPath(); ctx.arc(x - 72, y + 25, 8, 0, Math.PI * 2); ctx.arc(x + 72, y + 25, 8, 0, Math.PI * 2); ctx.fill(); }
-    if (id === 6) { for (let i = 0; i < 6; i += 1) { const a = i * Math.PI / 3; ctx.beginPath(); ctx.arc(x + 74 + Math.cos(a) * 15, y - 70 + Math.sin(a) * 15, 11, 0, Math.PI * 2); ctx.fill(); } }
-    if (id === 7) { roundRect(ctx, x - 82, y - 99, 164, 55, 28); ctx.fill(); ctx.beginPath(); ctx.ellipse(x + 62, y - 48, 62, 14, .08, 0, Math.PI * 2); ctx.fill(); }
+    const color = palette[colorIndex] || palette[0]; ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 5;
+    if (id === 1 || id === 2) { ctx.beginPath(); if (id === 1) { roundRect(ctx, x - 54, y - 28, 48, 38, 11); ctx.stroke(); roundRect(ctx, x + 6, y - 28, 48, 38, 11); ctx.stroke(); } else { ctx.arc(x - 30, y - 8, 23, 0, Math.PI * 2); ctx.arc(x + 30, y - 8, 23, 0, Math.PI * 2); ctx.stroke(); } ctx.beginPath(); ctx.moveTo(x - 6, y - 8); ctx.lineTo(x + 6, y - 8); ctx.stroke(); }
+    if (id === 3) { ctx.beginPath(); ctx.arc(x, y - 61, 72, Math.PI * 1.08, Math.PI * 1.92); ctx.stroke(); }
+    if (id === 4) { ctx.beginPath(); ctx.ellipse(x + 58, y - 72, 20, 11, .6, 0, Math.PI * 2); ctx.ellipse(x + 80, y - 77, 20, 11, -.6, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(x + 69, y - 74, 8, 0, Math.PI * 2); ctx.fill(); }
+    if (id === 5) { ctx.beginPath(); ctx.arc(x - 67, y + 25, 7, 0, Math.PI * 2); ctx.arc(x + 67, y + 25, 7, 0, Math.PI * 2); ctx.fill(); }
+    if (id === 6) { for (let i = 0; i < 6; i += 1) { const a = i * Math.PI / 3; ctx.beginPath(); ctx.arc(x + 65 + Math.cos(a) * 14, y - 67 + Math.sin(a) * 14, 10, 0, Math.PI * 2); ctx.fill(); } ctx.fillStyle = "#ffc845"; ctx.beginPath(); ctx.arc(x + 65, y - 67, 8, 0, Math.PI * 2); ctx.fill(); }
+    if (id === 7) { ctx.beginPath(); ctx.arc(x, y - 61, 78, Math.PI, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.ellipse(x + 49, y - 49, 58, 12, .08, 0, Math.PI * 2); ctx.fill(); }
   });
 }
 
 function drawCardStats(ctx: CanvasRenderingContext2D, points: number, missions: number, badges: number) {
   const stats = [["PUNTOS", points], ["SELLOS", missions], ["INSIGNIAS", badges]] as const;
   stats.forEach(([label, value], index) => {
-    const x = 240 + index * 360;
-    roundRect(ctx, x - 140, 930, 280, 135, 24); ctx.fillStyle = "rgba(255,255,255,.86)"; ctx.fill(); ctx.strokeStyle = "rgba(39,64,104,.1)"; ctx.lineWidth = 2; ctx.stroke();
-    ctx.fillStyle = index === 0 ? "#d28c00" : index === 1 ? "#078c99" : "#db3c7a"; ctx.font = "900 44px Arial"; ctx.fillText(String(value), x, 993);
-    ctx.fillStyle = "#66758d"; ctx.font = "700 19px Arial"; ctx.fillText(label, x, 1032);
+    const x = 245 + index * 375;
+    roundRect(ctx, x - 150, 1140, 300, 132, 24); ctx.fillStyle = "rgba(255,255,255,.92)"; ctx.shadowColor = "rgba(18,51,90,.08)"; ctx.shadowBlur = 18; ctx.shadowOffsetY = 8; ctx.fill(); ctx.shadowColor = "transparent"; ctx.strokeStyle = "rgba(18,51,90,.09)"; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = index === 0 ? "#d49400" : index === 1 ? "#078c99" : "#d92e78"; ctx.font = "900 42px Arial"; ctx.fillText(String(value), x, 1200);
+    ctx.fillStyle = "#60738d"; ctx.font = "800 17px Arial"; ctx.fillText(label, x, 1238);
+    ctx.fillStyle = index === 0 ? "#ffc845" : index === 1 ? "#4ab2fb" : "#f337a2"; ctx.fillRect(x - 42, 1261, 84, 4);
   });
 }
 
 function drawCardStamps(ctx: CanvasRenderingContext2D, missions: FestivalMission[]) {
   const unique = Array.from(new Map(missions.map((mission) => [mission.station, mission])).values()).slice(0, 6);
-  const gap = 160; const start = 600 - ((unique.length - 1) * gap) / 2;
+  ctx.fillStyle = "#6b7890"; ctx.font = "800 17px Arial"; ctx.fillText("SELLOS DE LA RUTA", 620, 1330);
+  const gap = 165; const start = 620 - ((unique.length - 1) * gap) / 2;
   unique.forEach((mission, index) => {
-    const x = start + index * gap; const y = 1210;
-    ctx.fillStyle = mission.color; ctx.beginPath(); ctx.arc(x, y, 55, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,.75)"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, 43, 0, Math.PI * 2); ctx.stroke();
-    ctx.fillStyle = "#ffffff"; ctx.font = "900 34px Arial"; ctx.fillText("✓", x, y + 12);
-    ctx.fillStyle = "#52627a"; ctx.font = "600 16px Arial"; fitText(ctx, mission.station.replace("Estación ", ""), x, y + 88, 145);
+    const x = start + index * gap; const y = 1412;
+    ctx.save(); ctx.shadowColor = `${mission.color}55`; ctx.shadowBlur = 16; ctx.shadowOffsetY = 7; ctx.fillStyle = mission.color; ctx.beginPath(); ctx.arc(x, y, 49, 0, Math.PI * 2); ctx.fill(); ctx.shadowColor = "transparent";
+    ctx.strokeStyle = "rgba(255,255,255,.88)"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, 38, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = "#ffffff"; ctx.font = "900 29px Arial"; ctx.fillText("✓", x, y + 10);
+    ctx.fillStyle = "#52627a"; drawAdaptiveText(ctx, mission.station.replace("Estación ", ""), x, y + 78, 145, 15, 12, 2, 1.12, "700"); ctx.restore();
   });
 }
 
@@ -375,7 +405,55 @@ function fitText(ctx: CanvasRenderingContext2D, text: string, x: number, y: numb
   if (ctx.measureText(text).width <= maxWidth) { ctx.fillText(text, x, y); return; }
   let size = Number(ctx.font.match(/\d+/)?.[0] || 30);
   while (size > 16 && ctx.measureText(text).width > maxWidth) { size -= 2; ctx.font = ctx.font.replace(/\d+px/, `${size}px`); }
-  ctx.fillText(text, x, y);
+  let output = text;
+  while (output.length > 1 && ctx.measureText(`${output}…`).width > maxWidth) output = output.slice(0, -1);
+  ctx.fillText(output.length < text.length ? `${output.trim()}…` : output, x, y);
+}
+
+function drawCertificatePill(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, text: string, background: string, foreground: string) {
+  roundRect(ctx, x - width / 2, y - height / 2, width, height, height / 2); ctx.fillStyle = background; ctx.fill();
+  ctx.fillStyle = foreground; ctx.textAlign = "center"; ctx.font = `800 ${Math.min(18, height * .36)}px Arial`; fitText(ctx, text, x, y + height * .12, width - 34);
+}
+
+function drawAdaptiveText(ctx: CanvasRenderingContext2D, text: string, x: number, centerY: number, maxWidth: number, maxSize: number, minSize: number, maxLines = 2, lineHeight = 1.1, weight = "800", family = "Arial") {
+  let size = maxSize;
+  let lines: string[] = [];
+  while (size >= minSize) {
+    ctx.font = `${weight} ${size}px ${family}`;
+    lines = wrapCanvasText(ctx, text, maxWidth);
+    if (lines.length <= maxLines && lines.every((line) => ctx.measureText(line).width <= maxWidth)) break;
+    size -= 2;
+  }
+  if (lines.length > maxLines) {
+    lines = lines.slice(0, maxLines);
+    let last = lines[maxLines - 1];
+    while (last.length > 1 && ctx.measureText(`${last}…`).width > maxWidth) last = last.slice(0, -1);
+    lines[maxLines - 1] = `${last.trim()}…`;
+  }
+  lines = lines.map((line) => {
+    if (ctx.measureText(line).width <= maxWidth) return line;
+    let clipped = line;
+    while (clipped.length > 1 && ctx.measureText(`${clipped}…`).width > maxWidth) clipped = clipped.slice(0, -1);
+    return `${clipped.trim()}…`;
+  });
+  const step = size * lineHeight;
+  const start = centerY - ((lines.length - 1) * step) / 2;
+  lines.forEach((line, index) => ctx.fillText(line, x, start + index * step));
+  return { lines, size };
+}
+
+function wrapCanvasText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number) {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return [""];
+  const lines: string[] = [];
+  let line = words[0];
+  for (let index = 1; index < words.length; index += 1) {
+    const candidate = `${line} ${words[index]}`;
+    if (ctx.measureText(candidate).width <= maxWidth) line = candidate;
+    else { lines.push(line); line = words[index]; }
+  }
+  lines.push(line);
+  return lines;
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {

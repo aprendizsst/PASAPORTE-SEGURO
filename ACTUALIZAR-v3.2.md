@@ -1,6 +1,6 @@
 # Actualización segura a Pasaporte Seguro 3.2
 
-> Revisión 3.2.3: el acceso de la portada funciona como enlace real con respaldo por URL. Se eliminó la inclinación geométrica en PC que podía cancelar el clic; si el evento interactivo fuera bloqueado, la navegación abre igualmente el formulario de acceso al recargar.
+> Revisión 3.2.4: certificado PDF completamente rediseñado con composición editorial, paleta institucional, avatar de proporciones más naturales, sello compacto y ajuste automático de nombres, sedes y etiquetas para impedir desbordes. Conserva además el acceso de portada con enlace de respaldo introducido en la revisión anterior.
 
 Esta versión conserva usuarios, misiones, sellos, evidencias, insignias y resultados existentes.
 
@@ -9,7 +9,7 @@ Esta versión conserva usuarios, misiones, sellos, evidencias, insignias y resul
 - Portada vibrante con la nueva ilustración optimizada a WebP (32 KB), paleta de los logos y composición específica para teléfonos.
 - Avatar configurado durante la creación del pasaporte y animación de confirmación.
 - Accesorios del avatar alineados y combinaciones incompatibles controladas.
-- Certificado final descargable como PDF, con avatar y composición mejorados.
+- Certificado A4 descargable con diseño editorial, avatar refinado, sello institucional, estadísticas, seis estaciones y ajuste automático de textos largos.
 - Recuperación de contraseña por correo y código de respaldo administrativo.
 - Creación y edición de insignias operativas.
 - Edición y eliminación segura de usuarios desde Administración.
