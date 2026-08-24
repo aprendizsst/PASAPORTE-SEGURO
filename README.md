@@ -8,7 +8,7 @@ Versión completa de la aplicación web para GitHub Pages y Google Apps Script. 
 - Misiones para todas las UAD o para una UAD específica.
 - Panel administrador con creación, edición, eliminación segura, códigos únicos y seguimiento de misiones.
 - Creador de avatares 3D con seis tonos de piel, siete colores y estilos de cabello, ocho colores de camiseta, hasta tres accesorios simultáneos y colores independientes.
-- Pestaña Bonus con sopa de letras, sudoku seguro y tiro al blanco.
+- Pestaña Bonus renovada: sopa de letras 10×10 generada de forma diferente en cada partida, sudoku 9×9 con solución única y tiro al blanco cronometrado con cinco dardos, dos ejes oscilantes y puntuación por proximidad al centro.
 - **Ruta Viva del Festival 3D** con las seis islas siempre visibles —incluida Ambiental—, nave espacial, avatar visible en la cabina y acceso filtrado a las misiones de cada estación.
 - Colección de insignias administrable: creación, edición, retiro, 16 iconos SVG, dos colores, criterios y metas configurables. Las insignias tienen acabado coleccionable con medallón, cinta, relieve, animación y estados de progreso.
 - Diploma A4 moderno en PDF, sin avatar, con fondo editorial, marco corporativo multicapa, medalla de puntos, sellos dentados e insignias vectoriales; conserva logos y textos adaptables.
