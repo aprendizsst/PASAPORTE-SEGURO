@@ -92,6 +92,18 @@ function featureEnabled(name: string) {
   return window.PASSPORT_CONFIG?.features?.[name] !== false;
 }
 
+function passportAccessHref() {
+  const url = new URL(window.location.href);
+  url.searchParams.set("passport", "1");
+  url.hash = "passport-access";
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function passportAccessRequested() {
+  const url = new URL(window.location.href);
+  return url.searchParams.get("passport") === "1" || url.hash === "#passport-access";
+}
+
 const SESSION_BUNDLE_KEY = "pasaporte_session_bundle_v4";
 const inflightReads = new Map<string, Promise<unknown>>();
 const WRITE_API_ACTIONS = new Set(["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode"]);
@@ -255,7 +267,7 @@ function resetCoverTilt(event: React.PointerEvent<HTMLDivElement>) {
 }
 
 export default function Home() {
-  const [opened, setOpened] = useState(false);
+  const [opened, setOpened] = useState(passportAccessRequested);
   const [user, setUser] = useState<User | null>(null);
   const [authMode, setAuthMode] = useState<"login" | "register" | "recover">("login");
   const [recoveryStage, setRecoveryStage] = useState<"request" | "reset">("request");
@@ -392,6 +404,8 @@ export default function Home() {
     window.setTimeout(() => setSessionOpening(false), 1050);
   }
   function openPassport() {
+    try { window.history.replaceState(window.history.state, "", passportAccessHref()); }
+    catch { /* Algunos contenedores embebidos restringen la URL; el estado local sigue funcionando. */ }
     setOpened(true);
     if (!user) { setAuthMode("login"); setRecoveryStage("request"); }
   }
@@ -699,10 +713,10 @@ export default function Home() {
   return <main className="app-shell">
     <div className="aurora aurora-one" /><div className="aurora aurora-two" />
     {!opened && <section className="cover-stage" aria-label="Portada del Pasaporte Seguro">
-      <div className="cover-perspective" onPointerMove={featureEnabled("dynamicCover") ? tiltCover : undefined} onPointerLeave={featureEnabled("dynamicCover") ? resetCoverTilt : undefined}>
-      <div className={`book-cover clean-cover minimal-cover vibrant-cover ${featureEnabled("dynamicCover") ? "dynamic-cover" : ""}`}><span className="cover-spine" /><span className="cover-foil" /><span className="cover-light" aria-hidden="true" /><div className="cover-brand-ribbons" aria-hidden="true"><i /><i /><i /><i /></div>
+      <div className="cover-perspective">
+      <div className="book-cover clean-cover minimal-cover vibrant-cover"><span className="cover-spine" /><span className="cover-foil" /><span className="cover-light" aria-hidden="true" /><div className="cover-brand-ribbons" aria-hidden="true"><i /><i /><i /><i /></div>
         <div className="cover-brands"><img className="cover-company-logo" src="./assets/jer-logo.webp" alt="JER Une tus sueños" /><span>Una experiencia apoyada por</span><img className="cover-program-logo" src="./assets/de-mi-para-mi.webp" alt="Programa De mí para mí" /></div>
-        <div className="minimal-cover-layout"><div className="minimal-cover-copy"><div className="cover-kickers"><p className="festival">FESTIVAL 2026</p><p className="eyebrow">SEMANA DE LA SEGURIDAD Y SALUD EN EL TRABAJO</p></div><h1>PASAPORTE <span>SEGURO</span></h1><p className="cover-intro">Tu ruta interactiva por el <b>autocuidado</b>, el bienestar y la seguridad en el trabajo.</p><div className="cover-keywords" aria-label="Temas del pasaporte">{stations.map((station) => <span key={station.name} style={{ "--station": station.color } as React.CSSProperties}>{station.name.replace("Estación ", "")}</span>)}</div><p className="motto">DIFERENTES EN DISTANCIA · ÚNICOS EN HISTORIA · JUNTOS EN PROPÓSITO</p><button type="button" className="primary-button cover-button cover-entry-button" onMouseDown={(event) => { if (event.button === 0) openPassport(); }} onClick={openPassport} onPointerMove={(event) => event.stopPropagation()} onPointerUp={(event) => { if (event.pointerType === "touch") openPassport(); }} aria-controls="passport-access">{user ? "Volver a mi pasaporte" : "Ingresar al pasaporte"} <UiIcon name="arrow" /></button><small className="cover-entry-note">Explora estaciones · completa retos · colecciona insignias</small></div>
+        <div className="minimal-cover-layout"><div className="minimal-cover-copy"><div className="cover-kickers"><p className="festival">FESTIVAL 2026</p><p className="eyebrow">SEMANA DE LA SEGURIDAD Y SALUD EN EL TRABAJO</p></div><h1>PASAPORTE <span>SEGURO</span></h1><p className="cover-intro">Tu ruta interactiva por el <b>autocuidado</b>, el bienestar y la seguridad en el trabajo.</p><div className="cover-keywords" aria-label="Temas del pasaporte">{stations.map((station) => <span key={station.name} style={{ "--station": station.color } as React.CSSProperties}>{station.name.replace("Estación ", "")}</span>)}</div><p className="motto">DIFERENTES EN DISTANCIA · ÚNICOS EN HISTORIA · JUNTOS EN PROPÓSITO</p><a className="primary-button cover-button cover-entry-button" href={passportAccessHref()} onClick={(event) => { event.preventDefault(); openPassport(); }} aria-controls="passport-access">{user ? "Volver a mi pasaporte" : "Ingresar al pasaporte"} <UiIcon name="arrow" /></a><small className="cover-entry-note">Explora estaciones · completa retos · colecciona insignias</small></div>
           <figure className="cover-art"><span className="cover-art-orbit" aria-hidden="true" /><img src="./assets/autocuidado-1mas1.webp" alt="Dos personas cuidando juntas su bienestar" width="817" height="900" loading="eager" decoding="async" /><strong className="cover-art-badge"><b>1 + 1 = 3</b><small>El cuidado nos multiplica</small></strong><figcaption>Juntos por un entorno más seguro, saludable y feliz</figcaption></figure>
         </div>
       </div></div><p className="hint"><span>↔</span> Mueve el cursor y abre tu próxima aventura</p>
