@@ -2,7 +2,7 @@
 
 Versión completa de la aplicación web para GitHub Pages y Google Apps Script. Incluye:
 
-- Portada tipo libro, logos JER y **De mí para mí**, apertura 3D y cierre animado de sesión.
+- Portada tipo libro vibrante, optimizada para móviles y basada en la paleta roja, azul y rosa de los logos JER y **De mí para mí**.
 - Registro e inicio de sesión con cédula y contraseña.
 - Tablero personal, progreso, puntos, sellos, historial y logro final.
 - Misiones para todas las UAD o para una UAD específica.
@@ -13,7 +13,7 @@ Versión completa de la aplicación web para GitHub Pages y Google Apps Script. 
 - Colección de insignias administrable: creación, edición, retiro, 10 iconos, dos colores, criterios y metas configurables.
 - Certificado personalizado en PDF, con avatar, sellos y logos integrados, generado directamente en el dispositivo.
 - Sellado protegido por código único de misión y carga opcional u obligatoria de fotos o videos como evidencia.
-- Portada dinámica con profundidad, brillo, constelaciones y ruta de vuelo.
+- Portada dinámica con profundidad, brillo, acentos institucionales y acceso compatible con mouse, teclado y pantallas táctiles.
 - Reporte administrativo CSV y actualización manual de estadísticas.
 - Diseño adaptable para computadores, tabletas y teléfonos.
 - Carga diferida de minijuegos, caché por usuario, restauración de sesión, reintentos progresivos e identificadores de operación para reducir cargas y duplicados.
