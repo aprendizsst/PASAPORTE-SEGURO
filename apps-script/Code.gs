@@ -24,7 +24,7 @@ const HEADERS = {
   Bonus: ["Id", "UsuarioId", "JuegoId", "Puntaje", "CompletadoEn"],
   Evidencias: ["Id", "UsuarioId", "MisionId", "ArchivoId", "NombreArchivo", "TipoMime", "TamanoBytes", "Url", "Estado", "CreadoEn"],
   Insignias: ["Id", "Titulo", "Descripcion", "Icono", "ColorPrimario", "ColorSecundario", "TipoCriterio", "Meta", "Estacion", "Activa", "Orden", "CreadaEn", "CreadaPor", "EditadaEn"],
-  Recuperaciones: ["Id", "UsuarioId", "CodigoHash", "ExpiraEn", "Intentos", "Usado", "Canal", "CreadoEn"],
+  Recuperaciones: ["Id", "UsuarioId", "CodigoHash", "ExpiraEn", "Intentos", "Usado", "Canal", "CreadoEn", "VerificadoEn", "TicketHash", "TicketExpiraEn"],
 };
 
 const CACHE_KEYS = {
@@ -35,7 +35,7 @@ const CACHE_KEYS = {
   SESSION_CLEANUP: "pasaporte:session-cleanup:v1",
   ADMIN_EVIDENCE: "pasaporte:admin-evidence:v1",
   BADGES: "pasaporte:badges:v1",
-  SCHEMA: "pasaporte:schema:v5",
+  SCHEMA: "pasaporte:schema:v6",
 };
 
 const CACHE_TTL = {
@@ -46,10 +46,10 @@ const CACHE_TTL = {
   ACTIVITY: 600,
 };
 
-const WRITE_ACTIONS = ["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode"];
+const WRITE_ACTIONS = ["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "verifyPasswordResetCode", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode"];
 
 function doGet() {
-  return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.2.10" } });
+  return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.2.11" } });
 }
 
 function doPost(event) {
@@ -74,6 +74,7 @@ function doPost(event) {
     else if (action === "updateAvatar") data = updateAvatarApi_(request);
     else if (action === "completeBonus") data = completeBonusApi_(request);
     else if (action === "requestPasswordReset") data = requestPasswordResetApi_(request);
+    else if (action === "verifyPasswordResetCode") data = verifyPasswordResetCodeApi_(request);
     else if (action === "resetPassword") data = resetPasswordApi_(request);
     else if (action === "adminCreateMission") data = adminCreateMissionApi_(request);
     else if (action === "adminEditMission") data = adminEditMissionApi_(request);
@@ -104,14 +105,14 @@ function setupPasaporteSeguro() {
   invalidateMissionCaches_();
   CacheService.getScriptCache().remove(CACHE_KEYS.BADGES);
   CacheService.getScriptCache().put(CACHE_KEYS.SCHEMA, "ready", 21600);
-  PropertiesService.getScriptProperties().setProperty("PASAPORTE_SCHEMA_VERSION", "5");
+  PropertiesService.getScriptProperties().setProperty("PASAPORTE_SCHEMA_VERSION", "6");
   return "Estructura actualizada sin borrar datos. Misiones, insignias, evidencias y recuperación de contraseñas están listas.";
 }
 
 function ensureRuntimeReady_() {
   const cache = CacheService.getScriptCache();
   if (cache.get(CACHE_KEYS.SCHEMA)) return;
-  if (PropertiesService.getScriptProperties().getProperty("PASAPORTE_SCHEMA_VERSION") === "5") {
+  if (PropertiesService.getScriptProperties().getProperty("PASAPORTE_SCHEMA_VERSION") === "6") {
     cache.put(CACHE_KEYS.SCHEMA, "ready", 21600);
     return;
   }
@@ -125,7 +126,7 @@ function ensureRuntimeReady_() {
       seedMissionCodes_();
       seedBadges_();
       migrateDefaultBadgeDesigns_();
-      PropertiesService.getScriptProperties().setProperty("PASAPORTE_SCHEMA_VERSION", "5");
+      PropertiesService.getScriptProperties().setProperty("PASAPORTE_SCHEMA_VERSION", "6");
       cache.put(CACHE_KEYS.SCHEMA, "ready", 21600);
     }
   } finally { lock.releaseLock(); }
@@ -290,13 +291,11 @@ function requestPasswordResetApi_(request) {
   return generic;
 }
 
-function resetPasswordApi_(request) {
+function verifyPasswordResetCodeApi_(request) {
   const cedula = cleanId_(request.cedula);
   const code = normalizeRecoveryCode_(request.code);
-  const password = String(request.password || "");
   required_(cedula, "La cédula es obligatoria.");
   if (code.length < 6) throw new Error("Ingresa el código completo.");
-  if (password.length < 8 || password.length > 128) throw new Error("La nueva contraseña debe tener entre 8 y 128 caracteres.");
   const user = findUserByCedula_(cedula);
   if (!user || !truthy_(user.Activo)) throw new Error("El código no es válido o ya venció.");
   const rows = findObjectsByField_(SHEETS.RECOVERY, "UsuarioId", user.Id, String)
@@ -310,9 +309,34 @@ function resetPasswordApi_(request) {
     return false;
   });
   if (!matched) throw new Error("El código no es válido o ya venció.");
+  const ticket = Utilities.getUuid().replace(/-/g, "") + Utilities.getUuid().replace(/-/g, "");
+  updateObjectRow_(SHEETS.RECOVERY, matched._row, {
+    VerificadoEn: new Date(), TicketHash: hashPassword_(ticket, String(matched.Id)),
+    TicketExpiraEn: new Date(Date.now() + 10 * 60 * 1000),
+  });
+  return { verified: true, ticket: ticket, expiresInMinutes: 10 };
+}
+
+function resetPasswordApi_(request) {
+  const cedula = cleanId_(request.cedula);
+  const ticket = String(request.ticket || "").trim();
+  const password = String(request.password || "");
+  required_(cedula, "La cédula es obligatoria.");
+  if (ticket.length < 32) throw new Error("Primero debes validar el código de recuperación.");
+  if (password.length < 8 || password.length > 128) throw new Error("La nueva contraseña debe tener entre 8 y 128 caracteres.");
+  const user = findUserByCedula_(cedula);
+  if (!user || !truthy_(user.Activo)) throw new Error("La validación del código no es válida o ya venció.");
+  const matched = findObjectsByField_(SHEETS.RECOVERY, "UsuarioId", user.Id, String)
+    .filter(function (row) {
+      return !truthy_(row.Usado) && String(row.TicketHash || "") &&
+        new Date(row.ExpiraEn).getTime() > Date.now() && new Date(row.TicketExpiraEn).getTime() > Date.now();
+    })
+    .sort(function (a, b) { return new Date(b.VerificadoEn || b.CreadoEn).getTime() - new Date(a.VerificadoEn || a.CreadoEn).getTime(); })
+    .find(function (row) { return hashPassword_(ticket, String(row.Id)) === String(row.TicketHash); });
+  if (!matched) throw new Error("La validación del código no es válida o ya venció. Solicita un código nuevo.");
   const salt = Utilities.getUuid();
   updateObjectRow_(SHEETS.USERS, user._row, { PasswordSalt: salt, PasswordHash: hashPassword_(password, salt) });
-  updateObjectRow_(SHEETS.RECOVERY, matched._row, { Usado: true });
+  updateObjectRow_(SHEETS.RECOVERY, matched._row, { Usado: true, TicketHash: "", TicketExpiraEn: "" });
   revokeUserSessions_(user.Id);
   invalidateUserCache_(user);
   clearLoginRate_(cedula);
@@ -784,7 +808,7 @@ function createRecovery_(userId, code, channel, durationMinutes) {
   const row = {
     Id: id, UsuarioId: userId, CodigoHash: hashPassword_(normalizeRecoveryCode_(code), id),
     ExpiraEn: new Date(Date.now() + durationMinutes * 60 * 1000), Intentos: 0,
-    Usado: false, Canal: channel, CreadoEn: new Date(),
+    Usado: false, Canal: channel, CreadoEn: new Date(), VerificadoEn: "", TicketHash: "", TicketExpiraEn: "",
   };
   row._row = appendObject_(SHEETS.RECOVERY, row);
   return row;

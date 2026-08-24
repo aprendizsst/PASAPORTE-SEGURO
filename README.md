@@ -69,7 +69,7 @@ El inicio de sesión incluye **Revisar conexión con Apps Script**. Esta opción
 
 > El backend valida la sesión y el rol en cada operación administrativa. Las contraseñas no se guardan en texto visible.
 
-La recuperación normal envía un código de un solo uso al correo registrado. Como respaldo, el administrador puede generar desde la pestaña **Usuarios** un código temporal válido por 24 horas. Ambos códigos se almacenan cifrados y se invalidan después de usarse.
+La recuperación normal funciona en tres pasos obligatorios: envío del código al correo registrado, validación del código y creación de la contraseña nueva. Después de validar el código, el servidor entrega un comprobante temporal de 10 minutos; sin ese comprobante no permite cambiar la contraseña. Como respaldo, el administrador puede generar desde la pestaña **Usuarios** un código temporal válido por 24 horas. Ambos tipos de código se almacenan cifrados y se invalidan después de usarse.
 
 ### Actualización desde una versión anterior
 
@@ -144,7 +144,7 @@ Estas medidas reducen notablemente las consultas, pero Google Apps Script y Goog
 - `Bonus`: resultados y puntajes de los minijuegos.
 - `Evidencias`: metadatos y enlaces privados de fotos o videos; el archivo binario se conserva en Google Drive.
 - `Insignias`: diseño, icono, colores, criterio, meta y estado de cada reconocimiento.
-- `Recuperaciones`: códigos cifrados de un solo uso, vencimiento, intentos y canal de recuperación.
+- `Recuperaciones`: códigos cifrados de un solo uso, vencimiento, intentos, canal y comprobante temporal de validación.
 
 ## Verificación después de publicar
 

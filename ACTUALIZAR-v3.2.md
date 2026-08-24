@@ -1,6 +1,6 @@
 # Actualización segura a Pasaporte Seguro 3.2
 
-> Revisión 3.2.10: composición del certificado refinada para nombres extensos. El nombre dispone de una zona segura de 830 px, ajuste automático de 24 a 44 px y hasta tres líneas. Se eliminaron la barra lateral y las curvas azules, se ampliaron los espacios verticales y el marco de la imagen 1+1=3 usa un degradado azul, rosa, naranja y rojo. El borde exterior también es multicolor y todas las líneas decorativas quedan contenidas dentro del A4.
+> Revisión 3.2.11: recuperación de contraseña separada en tres pasos obligatorios: solicitar el código, validarlo y crear la contraseña. Apps Script genera un comprobante temporal de 10 minutos únicamente después de verificar el código y bloquea el cambio de contraseña cuando ese comprobante falta o vence. Conserva todas las mejoras visuales del certificado 3.2.10.
 
 Al ejecutar `setupPasaporteSeguro`, las seis insignias iniciales que aún conservan exactamente sus colores antiguos pasan a la paleta corporativa. Las insignias creadas o personalizadas desde Administración no se modifican.
 
@@ -34,7 +34,7 @@ La migración agrega solamente las hojas o columnas faltantes. No borra filas ex
 
 1. Cree un pasaporte y personalice el avatar antes de enviarlo.
 2. Confirme la animación “Listo para viajar por el mundo del autocuidado”.
-3. Solicite un código desde “¿Olvidaste tu contraseña?” y complete el cambio.
+3. Solicite un código desde “¿Olvidaste tu contraseña?”, introdúzcalo en el segundo paso y confirme que el formulario de contraseña solo aparece después de validarlo.
 4. Como administrador, cree una insignia con icono y dos colores.
 5. Edite un usuario, genere su código de respaldo y elimine un registro de prueba.
 6. Complete el recorrido y descargue el certificado PDF.
