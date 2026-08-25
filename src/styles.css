@@ -481,3 +481,7 @@
 
 /* Modal global v3.2.19: el portal lo ancla a la ventana, fuera del libro animado */
 .game-portal{position:fixed!important;inset:0!important;width:100vw!important;z-index:1000!important}
+
+/* Salón de récords v3.2.20: selección útil, contadores y vacío compacto */
+.leaderboard-tabs button{display:flex;align-items:center;gap:7px}.leaderboard-tabs button>span{min-width:18px;height:18px;display:grid;place-items:center;padding:0 5px;border-radius:999px;color:#65758a;background:#edf1f6;font-size:7px}.leaderboard-tabs button.active>span{color:#543b9d;background:rgba(255,255,255,.88)}.leaderboard-empty{min-height:74px;border:1px dashed #dce4ec;border-radius:13px;background:radial-gradient(circle at 50% 0,rgba(117,83,201,.08),transparent 64%),rgba(255,255,255,.64)}.leaderboard-empty>i{width:28px;height:28px;display:grid;place-items:center;margin:0 auto 2px;border-radius:10px;color:#7653c6;background:#eee8fb;font-size:17px;font-style:normal}.leaderboard-empty.loading{border-color:transparent;background:transparent}.leaderboard-list article.current{grid-template-columns:30px minmax(0,1fr) auto auto}.leaderboard-list article>em{justify-self:end;padding:3px 5px;border-radius:999px;color:#6847b0;background:#e9defd;font-size:5px;font-style:normal;font-weight:950;letter-spacing:.08em;white-space:nowrap}
+@media(min-width:901px){.bonus-leaderboard:has(.leaderboard-empty){padding-bottom:15px}.bonus-leaderboard .leaderboard-empty{min-height:68px}}

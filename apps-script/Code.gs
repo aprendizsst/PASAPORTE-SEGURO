@@ -51,7 +51,7 @@ const CACHE_TTL = {
 const WRITE_ACTIONS = ["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "verifyPasswordResetCode", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode", "adminManageBonusRecord"];
 
 function doGet() {
-  return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.2.19" } });
+  return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.2.20" } });
 }
 
 function doPost(event) {
@@ -421,10 +421,11 @@ function bonusRecordValue_(row) {
 
 function bonusLeaderboardApi_(request) {
   const currentUser = requireSession_(request.token);
+  if (truthy_(request.force)) CacheService.getScriptCache().remove(CACHE_KEYS.BONUS_LEADERBOARD);
   let rows = cacheGet_(CACHE_KEYS.BONUS_LEADERBOARD);
   if (!rows) {
     const users = {};
-    sheetObjects_(SHEETS.USERS).filter(function (user) { return truthy_(user.Activo) && String(user.Rol) !== "ADMIN"; }).forEach(function (user) {
+    sheetObjects_(SHEETS.USERS).filter(function (user) { return truthy_(user.Activo); }).forEach(function (user) {
       users[String(user.Id)] = { name: String(user.Nombre || "Participante"), uad: String(user.UAD || "") };
     });
     const rankedGames = ["forest-run", "station-pairs", "wellbeing-flight", "target"];
