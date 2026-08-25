@@ -45,12 +45,14 @@ export default function MiniGamesPage({ completed, scores, records, leaderboard,
     {current && <div className="game-backdrop" role="dialog" aria-modal="true" aria-label={current.title}><div className="game-modal" style={{ "--game": current.color } as React.CSSProperties}>
       <button className="game-close" onClick={() => setSelected(null)} aria-label="Cerrar minijuego">×</button>
       <div className="game-modal-heading"><span><GameIcon name={current.id} /></span><div><small>ZONA BONUS · {current.id === "target" ? "HASTA " : ""}{current.points} PUNTOS</small><h3>{current.title}</h3></div></div>
-      {current.id === "word-search" && <WordSearchGame completed={completed.includes(current.id)} busy={busy === `bonus-${current.id}`} onComplete={() => onComplete(current.id, current.points)} />}
-      {current.id === "sudoku" && <SudokuGame completed={completed.includes(current.id)} busy={busy === `bonus-${current.id}`} onComplete={() => onComplete(current.id, current.points)} />}
-      {current.id === "target" && <TargetGame completed={completed.includes(current.id)} busy={busy === `bonus-${current.id}`} onComplete={(score, record) => onComplete(current.id, score, record)} />}
-      {current.id === "forest-run" && <ForestRunGame bestRecord={records[current.id] || 0} busy={busy === `bonus-${current.id}`} onComplete={(score, record) => onComplete(current.id, score, record)} />}
-      {current.id === "station-pairs" && <StationPairsGame bestRecord={records[current.id] || 0} busy={busy === `bonus-${current.id}`} onComplete={(score, record) => onComplete(current.id, score, record)} />}
-      {current.id === "wellbeing-flight" && <WellbeingFlightGame bestRecord={records[current.id] || 0} busy={busy === `bonus-${current.id}`} onComplete={(score, record) => onComplete(current.id, score, record)} />}
+      <div className="game-scroll-area">
+        {current.id === "word-search" && <WordSearchGame completed={completed.includes(current.id)} busy={busy === `bonus-${current.id}`} onComplete={() => onComplete(current.id, current.points)} />}
+        {current.id === "sudoku" && <SudokuGame completed={completed.includes(current.id)} busy={busy === `bonus-${current.id}`} onComplete={() => onComplete(current.id, current.points)} />}
+        {current.id === "target" && <TargetGame completed={completed.includes(current.id)} busy={busy === `bonus-${current.id}`} onComplete={(score, record) => onComplete(current.id, score, record)} />}
+        {current.id === "forest-run" && <ForestRunGame bestRecord={records[current.id] || 0} busy={busy === `bonus-${current.id}`} onComplete={(score, record) => onComplete(current.id, score, record)} />}
+        {current.id === "station-pairs" && <StationPairsGame bestRecord={records[current.id] || 0} busy={busy === `bonus-${current.id}`} onComplete={(score, record) => onComplete(current.id, score, record)} />}
+        {current.id === "wellbeing-flight" && <WellbeingFlightGame bestRecord={records[current.id] || 0} busy={busy === `bonus-${current.id}`} onComplete={(score, record) => onComplete(current.id, score, record)} />}
+      </div>
     </div></div>}
   </div>;
 }

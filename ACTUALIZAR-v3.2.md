@@ -1,5 +1,7 @@
 # Actualización segura a Pasaporte Seguro 3.2
 
+> Revisión 3.2.16: se corrige el encuadre de todos los minijuegos. El encabezado permanece visible y el contenido utiliza un área de desplazamiento vertical independiente, compatible con rueda, panel táctil y gestos móviles. Los resultados y botones finales ya no quedan cortados, incluso en pantallas de poca altura.
+
 > Revisión 3.2.15: se corrige definitivamente la cara vacía de las cartas de Parejas del Festival. Las cartas ahora renderizan de forma condicional una sola cara, sin depender de capas y rotaciones 3D que algunos navegadores dejaban invisibles. Cada pareja muestra una ilustración SVG, nombre de la estación, color propio y confirmación visual al acertar.
 
 > Revisión 3.2.14: se corrige el guardado de récords para distinguir correctamente un valor reiniciado en cero de un registro antiguo sin récord. Administración incorpora una sección de puntuaciones para buscar, reiniciar individualmente, restablecer todos los récords o eliminar un resultado completo. El ranking se refresca inmediatamente después de guardar y omite resultados reiniciados. Parejas del Festival reemplaza los símbolos por seis ilustraciones SVG temáticas, visibles y adaptables a móvil.
