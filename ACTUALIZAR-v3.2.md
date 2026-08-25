@@ -1,5 +1,7 @@
 # Actualización segura a Pasaporte Seguro 3.2
 
+> Revisión 3.2.15: se corrige definitivamente la cara vacía de las cartas de Parejas del Festival. Las cartas ahora renderizan de forma condicional una sola cara, sin depender de capas y rotaciones 3D que algunos navegadores dejaban invisibles. Cada pareja muestra una ilustración SVG, nombre de la estación, color propio y confirmación visual al acertar.
+
 > Revisión 3.2.14: se corrige el guardado de récords para distinguir correctamente un valor reiniciado en cero de un registro antiguo sin récord. Administración incorpora una sección de puntuaciones para buscar, reiniciar individualmente, restablecer todos los récords o eliminar un resultado completo. El ranking se refresca inmediatamente después de guardar y omite resultados reiniciados. Parejas del Festival reemplaza los símbolos por seis ilustraciones SVG temáticas, visibles y adaptables a móvil.
 
 > Revisión 3.2.13: se añaden Carrera del Bosque, Parejas del Festival y Vuelo del Bienestar. Los juegos cuentan con dificultad progresiva, controles táctiles y de teclado, récord personal y un Salón de récords global cargado únicamente al abrir Bonus. La hoja `Bonus` incorpora la columna `Record`, por lo que es obligatorio ejecutar una vez `setupPasaporteSeguro()` después de reemplazar Apps Script.
