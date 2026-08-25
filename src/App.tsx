@@ -15,7 +15,8 @@ type AvatarConfig = { skin: number; hair: number; style: number; shirt: number; 
 type PersonProgress = { id: string; name: string; cedula: string; phone?: string; email: string; cargo?: string; uad: string; completed: number; total: number; points: number; createdAt?: string };
 type EvidencePayload = { name: string; mime: string; data: string; size: number };
 type AdminEvidence = { id: string; userName: string; missionTitle: string; fileName: string; mime: string; size: number; url: string; status: string; createdAt: string };
-type SessionBundle = { user: User; missions: Mission[]; historyMissions?: Mission[]; completed: number[]; started?: number[]; history?: Record<number, string>; adminPeople?: PersonProgress[]; adminEvidence?: AdminEvidence[]; badgeDefinitions?: BadgeDefinition[]; bonusCompleted?: string[]; bonusScores?: Record<string, number>; bonusRecords?: Record<string, number>; token: string };
+type AdminBonusRecord = { id: string; userId: string; userName: string; uad: string; gameId: BonusGameId; gameName: string; score: number; record: number; completedAt: string };
+type SessionBundle = { user: User; missions: Mission[]; historyMissions?: Mission[]; completed: number[]; started?: number[]; history?: Record<number, string>; adminPeople?: PersonProgress[]; adminEvidence?: AdminEvidence[]; adminBonusRecords?: AdminBonusRecord[]; badgeDefinitions?: BadgeDefinition[]; bonusCompleted?: string[]; bonusScores?: Record<string, number>; bonusRecords?: Record<string, number>; token: string };
 type StoredSession = { savedAt: number; bundle: SessionBundle };
 
 const stations = [
@@ -130,7 +131,7 @@ function passportAccessRequested() {
 
 const SESSION_BUNDLE_KEY = "pasaporte_session_bundle_v4";
 const inflightReads = new Map<string, Promise<unknown>>();
-const WRITE_API_ACTIONS = new Set(["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "verifyPasswordResetCode", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode"]);
+const WRITE_API_ACTIONS = new Set(["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "verifyPasswordResetCode", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode", "adminManageBonusRecord"]);
 
 function apiPolicy(action: string, payload?: Record<string, unknown>) {
   if (action === "login" || action === "register") return { attempts: 2, timeoutMs: 22000 };
@@ -171,7 +172,7 @@ async function callApi(action: string, payload: Record<string, unknown> = {}) {
   const url = apiUrlOrThrow();
   const requestId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const policy = apiPolicy(action, payload);
-  const inflightKey = action === "catalogs" ? "catalogs" : action === "session" ? `session:${String(payload.token || "")}` : action === "getBonusLeaderboard" ? `bonus-leaderboard:${String(payload.token || "")}` : "";
+  const inflightKey = action === "catalogs" ? "catalogs" : action === "session" ? `session:${String(payload.token || "")}` : action === "getBonusLeaderboard" && !payload.force ? `bonus-leaderboard:${String(payload.token || "")}` : "";
 
   const request = async () => {
     let lastError: unknown;
@@ -336,6 +337,7 @@ export default function Home() {
   const [historyDates, setHistoryDates] = useState<Record<number, string>>({});
   const [adminPeople, setAdminPeople] = useState(demoPeople);
   const [adminEvidence, setAdminEvidence] = useState<AdminEvidence[]>([]);
+  const [adminBonusRecords, setAdminBonusRecords] = useState<AdminBonusRecord[]>([]);
   const [badgeDefinitions, setBadgeDefinitions] = useState<BadgeDefinition[]>([]);
   const [pageDirection, setPageDirection] = useState<"next" | "prev">("next");
   const [pageKey, setPageKey] = useState(0);
@@ -418,9 +420,10 @@ export default function Home() {
       token: sessionToken,
       ...(adminDashboardLoaded ? { adminPeople } : {}),
       ...(adminDashboardLoaded ? { adminEvidence } : {}),
+      ...(adminDashboardLoaded ? { adminBonusRecords } : {}),
     };
     localStorage.setItem(SESSION_BUNDLE_KEY, JSON.stringify({ savedAt: Date.now(), bundle } satisfies StoredSession));
-  }, [adminDashboardLoaded, adminEvidence, adminPeople, badgeDefinitions, bonusCompleted, bonusRecords, bonusScores, completed, historyDates, historyMissions, missions, sessionToken, started, user]);
+  }, [adminBonusRecords, adminDashboardLoaded, adminEvidence, adminPeople, badgeDefinitions, bonusCompleted, bonusRecords, bonusScores, completed, historyDates, historyMissions, missions, sessionToken, started, user]);
 
   useEffect(() => {
     if (view !== "bonus" || !user || !sessionToken) return;
@@ -437,6 +440,7 @@ export default function Home() {
     setHistoryDates(data.history || {});
     setAdminPeople(data.adminPeople || []);
     setAdminEvidence(data.adminEvidence || []);
+    setAdminBonusRecords(data.adminBonusRecords || []);
     setBadgeDefinitions(data.badgeDefinitions || []);
     setBonusCompleted(data.bonusCompleted || []);
     setBonusScores(data.bonusScores || {});
@@ -730,15 +734,30 @@ export default function Home() {
     } catch (error) { notify(error instanceof Error ? error.message : "No fue posible generar el código."); return ""; }
     finally { setBusyAction(""); }
   }
+  async function manageAdminBonusRecord(recordId: string, mode: "reset" | "delete" | "resetAll") {
+    const actionKey = mode === "resetAll" ? "records-reset-all" : `${mode}-record-${recordId}`;
+    setBusyAction(actionKey);
+    try {
+      if (getApiUrl()) await callApi("adminManageBonusRecord", { token: sessionToken, recordId, mode });
+      if (mode === "delete") setAdminBonusRecords((current) => current.filter((record) => record.id !== recordId));
+      else if (mode === "reset") setAdminBonusRecords((current) => current.map((record) => record.id === recordId ? { ...record, record: 0 } : record));
+      else setAdminBonusRecords((current) => current.map((record) => ({ ...record, record: 0 })));
+      setBonusLeaderboard([]); bonusLeaderboardLoaded.current = false;
+      notify(mode === "delete" ? "Resultado Bonus eliminado junto con sus puntos." : mode === "resetAll" ? "Todos los récords fueron restablecidos a cero." : "Récord restablecido a cero; los puntos se conservaron.");
+      return true;
+    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible administrar el récord."); return false; }
+    finally { setBusyAction(""); }
+  }
   async function refreshAdminDashboard() {
     if (busyAction) return;
     setBusyAction("admin-refresh");
     try {
       if (getApiUrl()) {
         const data = await callApi("adminDashboard", { token: sessionToken });
-        const dashboard = data as { people?: PersonProgress[]; missions?: Mission[]; evidence?: AdminEvidence[]; badges?: BadgeDefinition[] };
+        const dashboard = data as { people?: PersonProgress[]; missions?: Mission[]; evidence?: AdminEvidence[]; records?: AdminBonusRecord[]; badges?: BadgeDefinition[] };
         setAdminPeople(dashboard.people || []);
         setAdminEvidence(dashboard.evidence || []);
+        setAdminBonusRecords(dashboard.records || []);
         if (dashboard.missions?.length) setMissions(dashboard.missions);
         if (dashboard.badges) setBadgeDefinitions(dashboard.badges);
         setAdminDashboardLoaded(true);
@@ -775,7 +794,7 @@ export default function Home() {
     setBonusLeaderboardLoading(true);
     try {
       if (getApiUrl()) {
-        const data = await callApi("getBonusLeaderboard", { token: sessionToken }) as { entries?: BonusLeaderboardEntry[] };
+        const data = await callApi("getBonusLeaderboard", { token: sessionToken, force }) as { entries?: BonusLeaderboardEntry[] };
         setBonusLeaderboard(data.entries || []);
       } else setBonusLeaderboard(demoBonusLeaderboard);
     } catch {
@@ -803,7 +822,7 @@ export default function Home() {
       setBonusScores((current) => ({ ...current, [gameId]: bestScore }));
       setBonusRecords((current) => ({ ...current, [gameId]: bestRecord }));
       notify(record > (previousRecords[gameId] || 0) ? `¡Nuevo récord! Sumaste hasta ${bestScore} puntos.` : "Resultado guardado. Tu mejor récord se conserva.");
-      void loadBonusLeaderboard(true);
+      await loadBonusLeaderboard(true);
     } catch (error) {
       setBonusCompleted(previousCompleted);
       setBonusScores(previousScores);
@@ -820,7 +839,7 @@ export default function Home() {
       localStorage.removeItem("pasaporte_session");
       localStorage.removeItem(SESSION_BUNDLE_KEY);
       setSessionToken(""); setUser(null); setOpened(false); setView("dashboard");
-      setBonusCompleted([]); setBonusScores({}); setBonusRecords({}); setBonusLeaderboard([]); bonusLeaderboardLoaded.current = false; setSessionClosing(false);
+      setBonusCompleted([]); setBonusScores({}); setBonusRecords({}); setBonusLeaderboard([]); setAdminBonusRecords([]); bonusLeaderboardLoaded.current = false; setSessionClosing(false);
       setAdminDashboardLoaded(false);
     }, 900);
   }
@@ -868,7 +887,7 @@ export default function Home() {
         {view === "history" && <div className="page-content history-page"><div className="section-heading"><div><p className="step-label">BITÁCORA PERSONAL</p><h2>Historial de misiones</h2><p>Todos los sellos y experiencias que has coleccionado.</p></div><div className="passport-number">PASAPORTE Nº <b>{user.cedula.slice(-6).padStart(6, "0")}</b></div></div><div className="history-list">{completedHistory.length ? completedHistory.map((m, i) => <article className="history-item" key={m.id}><span className="history-icon" style={{ background: m.color }}><StationIcon station={m.station} /></span><div><small>{m.station}</small><h3>{m.title}</h3><p>Completada el {historyDates[m.id] ? new Date(historyDates[m.id]).toLocaleDateString("es-CO", { day: "numeric", month: "long", year: "numeric" }) : `${i === 0 ? "10" : "11"} de agosto de 2026`} · {m.duration}</p></div><div className="history-points">+{m.points}<small>puntos</small></div><span className="mini-stamp">SELLADA</span></article>) : <div className="empty-state"><span><UiIcon name="compass" /></span><h3>Tu bitácora está lista</h3><p>Completa tu primera misión para estrenar esta página.</p><button className="primary-button" onClick={() => turnTo("missions")}>Explorar misiones</button></div>}</div></div>}
 
         {view === "complete" && <div className="page-content complete-page"><div className="confetti-field" aria-hidden="true">✦　●　◆　✦　●　◆　✦</div><div className="completion-seal"><span>✓</span><b>PASAPORTE<br />COMPLETO</b><small>FESTIVAL 2026</small></div><p className="step-label">MISIÓN CUMPLIDA</p><h2>¡Completaste tu Pasaporte Seguro!</h2><p className="completion-copy">Recorriste todas las estaciones y demostraste que la diversidad, la felicidad, la seguridad, la salud y el cuidado se construyen entre todos.</p><div className="completion-name"><small>OTORGADO A</small><b>{user.name}</b><span>{user.uad} · {points} puntos · {unlockedBadges} insignias</span></div><div className="completion-actions"><button className="secondary-button" onClick={() => turnTo("history")}>Ver mi historial</button>{featureEnabled("badges") && <button className="secondary-button" onClick={() => turnTo("badges")}>Ver insignias</button>}</div>{featureEnabled("downloadableCard") && <FinalPassportCard name={user.name} uad={user.uad} cedula={user.cedula} avatar={user.avatar} points={points} missions={visibleMissions} completed={completed} badges={badges} onNotice={notify} />}</div>}
-        {view === "admin" && user.role === "ADMIN" && <AdminPage missions={missions} people={adminPeople} evidence={adminEvidence} badges={badgeDefinitions} uadOptions={catalogs.uads} busyAction={busyAction} onCreate={createAdminMission} onEdit={editAdminMission} onDelete={deleteAdminMission} onCreateBadge={createAdminBadge} onEditBadge={editAdminBadge} onDeleteBadge={deleteAdminBadge} onEditUser={editAdminUser} onDeleteUser={deleteAdminUser} onCreateRecoveryCode={createAdminRecoveryCode} onRefresh={refreshAdminDashboard} />}
+        {view === "admin" && user.role === "ADMIN" && <AdminPage missions={missions} people={adminPeople} evidence={adminEvidence} records={adminBonusRecords} badges={badgeDefinitions} uadOptions={catalogs.uads} busyAction={busyAction} onCreate={createAdminMission} onEdit={editAdminMission} onDelete={deleteAdminMission} onCreateBadge={createAdminBadge} onEditBadge={editAdminBadge} onDeleteBadge={deleteAdminBadge} onEditUser={editAdminUser} onDeleteUser={deleteAdminUser} onCreateRecoveryCode={createAdminRecoveryCode} onManageRecord={manageAdminBonusRecord} onRefresh={refreshAdminDashboard} />}
         </div>
       </div>
     </section>}
@@ -945,10 +964,11 @@ function Tab({ label, icon, active, onClick }: { label: string; icon: string; ac
 function StatCard({ icon, label, value, color }: { icon: string; label: string; value: string; color: string }) { return <article className="stat-card"><span style={{ background: color }}><UiIcon name={icon} /></span><div><b>{value}</b><small>{label}</small></div></article>; }
 function GuideStep({ number, icon, title, text, color }: { number: string; icon: string; title: string; text: string; color: string }) { return <article className="guide-step"><span className="guide-number">{number}</span><div className="guide-icon" style={{ background: color }}><UiIcon name={icon} /></div><h3>{title}</h3><p>{text}</p></article>; }
 
-function AdminPage({ missions, people, evidence, badges, uadOptions, busyAction, onCreate, onEdit, onDelete, onCreateBadge, onEditBadge, onDeleteBadge, onEditUser, onDeleteUser, onCreateRecoveryCode, onRefresh }: {
+function AdminPage({ missions, people, evidence, records, badges, uadOptions, busyAction, onCreate, onEdit, onDelete, onCreateBadge, onEditBadge, onDeleteBadge, onEditUser, onDeleteUser, onCreateRecoveryCode, onManageRecord, onRefresh }: {
   missions: Mission[];
   people: PersonProgress[];
   evidence: AdminEvidence[];
+  records: AdminBonusRecord[];
   badges: BadgeDefinition[];
   uadOptions: string[];
   busyAction: string;
@@ -961,9 +981,10 @@ function AdminPage({ missions, people, evidence, badges, uadOptions, busyAction,
   onEditUser: (person: PersonProgress) => Promise<boolean>;
   onDeleteUser: (person: PersonProgress) => Promise<boolean>;
   onCreateRecoveryCode: (person: PersonProgress) => Promise<string>;
+  onManageRecord: (recordId: string, mode: "reset" | "delete" | "resetAll") => Promise<boolean>;
   onRefresh: () => Promise<void>;
 }) {
-  const [tab, setTab] = useState<"overview" | "missions" | "badges" | "users" | "evidence">("overview");
+  const [tab, setTab] = useState<"overview" | "missions" | "badges" | "users" | "records" | "evidence">("overview");
   const [audience, setAudience] = useState("Todas las UAD");
   const [deleteTarget, setDeleteTarget] = useState<Mission | null>(null);
   const [editTarget, setEditTarget] = useState<Mission | null>(null);
@@ -972,8 +993,11 @@ function AdminPage({ missions, people, evidence, badges, uadOptions, busyAction,
   const [userDeleteTarget, setUserDeleteTarget] = useState<PersonProgress | null>(null);
   const [userEditTarget, setUserEditTarget] = useState<PersonProgress | null>(null);
   const [recoveryCode, setRecoveryCode] = useState<{ person: PersonProgress; code: string } | null>(null);
+  const [recordAction, setRecordAction] = useState<{ record?: AdminBonusRecord; mode: "reset" | "delete" | "resetAll" } | null>(null);
   const [userSearch, setUserSearch] = useState("");
+  const [recordSearch, setRecordSearch] = useState("");
   const filteredPeople = people.filter((person) => `${person.name} ${person.cedula} ${person.phone || ""} ${person.email} ${person.cargo || ""} ${person.uad}`.toLowerCase().includes(userSearch.toLowerCase()));
+  const filteredRecords = records.filter((record) => `${record.userName} ${record.uad} ${record.gameName}`.toLowerCase().includes(recordSearch.toLowerCase()));
   const average = people.length ? Math.round(people.reduce((sum, p) => sum + (p.total ? (p.completed / p.total) * 100 : 0), 0) / people.length) : 0;
   const leader = people.slice().sort((a, b) => b.completed - a.completed || b.points - a.points)[0];
   const totalCompleted = people.reduce((sum, p) => sum + p.completed, 0);
@@ -1053,7 +1077,7 @@ function AdminPage({ missions, people, evidence, badges, uadOptions, busyAction,
 
   return <div className="page-content admin-page">
     <div className="admin-title"><div><p className="step-label">CENTRO DE CONTROL</p><h2>Administración del festival</h2><p>Gestiona misiones y acompaña el avance de los colaboradores.</p></div><div className="admin-badge"><UiIcon name="settings" /> Modo administrador</div></div>
-    <div className="admin-tabs"><button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>Resumen</button><button className={tab === "missions" ? "active" : ""} onClick={() => setTab("missions")}>Misiones</button><button className={tab === "badges" ? "active" : ""} onClick={() => setTab("badges")}>Insignias <span>{badges.length}</span></button><button className={tab === "users" ? "active" : ""} onClick={() => setTab("users")}>Usuarios <span>{people.length}</span></button><button className={tab === "evidence" ? "active" : ""} onClick={() => setTab("evidence")}>Evidencias <span>{evidence.length}</span></button></div>
+    <div className="admin-tabs"><button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>Resumen</button><button className={tab === "missions" ? "active" : ""} onClick={() => setTab("missions")}>Misiones</button><button className={tab === "badges" ? "active" : ""} onClick={() => setTab("badges")}>Insignias <span>{badges.length}</span></button><button className={tab === "users" ? "active" : ""} onClick={() => setTab("users")}>Usuarios <span>{people.length}</span></button><button className={tab === "records" ? "active" : ""} onClick={() => setTab("records")}>Récords <span>{records.length}</span></button><button className={tab === "evidence" ? "active" : ""} onClick={() => setTab("evidence")}>Evidencias <span>{evidence.length}</span></button></div>
 
     {tab === "overview" ? <>
       <div className="admin-stats"><StatCard icon="users" label="Colaboradores" value={String(people.length)} color="#9d5cff" /><StatCard icon="check" label="Misiones completadas" value={String(totalCompleted)} color="#12cfe0" /><StatCard icon="trend" label="Avance promedio" value={`${average}%`} color="#43d17d" /><StatCard icon="sparkle" label="Puntos entregados" value={totalPoints >= 1000 ? `${(totalPoints / 1000).toFixed(1)}K` : String(totalPoints)} color="#ffb703" /></div>
@@ -1066,6 +1090,7 @@ function AdminPage({ missions, people, evidence, badges, uadOptions, busyAction,
       <form className="create-mission-card badge-builder" onSubmit={createBadge}><p className="step-label">NUEVO RECONOCIMIENTO</p><h3>Crear una insignia</h3><BadgeFormFields /><button className="primary-button" disabled={busyAction === "create-badge"}>{busyAction === "create-badge" ? <><LoadingDot /> Publicando...</> : <>Publicar insignia <UiIcon name="badge" /></>}</button></form>
       <div className="admin-badge-list"><div className="section-heading"><div><p className="step-label">COLECCIÓN ACTIVA</p><h3>Insignias publicadas</h3></div><span>{badges.length}</span></div>{badges.map((badge) => <article key={badge.id}><span className="admin-medal-preview" style={{ "--badge-a": badge.primaryColor, "--badge-b": badge.secondaryColor } as React.CSSProperties}><BadgeIcon icon={badge.icon} /></span><div><b>{badge.title}</b><small>{badgeCriterionLabel(badge)} · meta {badge.goal}</small><i><span style={{ background: badge.primaryColor }} /><span style={{ background: badge.secondaryColor }} /></i></div><div className="mission-admin-actions"><button title="Editar insignia" onClick={() => setBadgeEditTarget(badge)}><UiIcon name="edit" /></button><button className="delete-mission" title="Retirar insignia" onClick={() => setBadgeDeleteTarget(badge)}><UiIcon name="trash" /></button></div></article>)}</div>
     </div> : tab === "users" ? <div className="users-admin"><div className="section-heading"><div><p className="step-label">CONTROL DE ACCESO</p><h3>Usuarios registrados</h3><p>Busca, edita, recupera el acceso o elimina registros con errores.</p></div><button className="secondary-button" onClick={onRefresh}>Actualizar ↻</button></div><div className="user-search"><UiIcon name="users" /><input value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder="Buscar usuario..." /></div><div className="user-management-list">{filteredPeople.map((person) => <article key={person.id}><span>{person.name.charAt(0).toUpperCase()}</span><div><b>{person.name}</b><small>CC {person.cedula} · {person.uad}</small><i>{person.email}</i></div><div className="user-score"><b>{person.points}</b><small>puntos</small></div><div className="user-actions"><button title="Editar usuario" disabled={busyAction === `edit-user-${person.id}`} onClick={() => setUserEditTarget(person)}><UiIcon name="edit" /><span>Editar</span></button><button title="Generar código de respaldo" disabled={busyAction === `recovery-user-${person.id}`} onClick={() => void generateBackupCode(person)}><UiIcon name="key" /><span>Respaldo</span></button><button className="danger-outline" title="Eliminar usuario" disabled={busyAction === `delete-user-${person.id}`} onClick={() => setUserDeleteTarget(person)}><UiIcon name="trash" /><span>Eliminar</span></button></div></article>)}</div>{!filteredPeople.length && <div className="empty-state"><span><UiIcon name="users" /></span><h3>No se encontraron usuarios</h3><p>Prueba con otro nombre, cédula o UAD.</p></div>}</div>
+    : tab === "records" ? <div className="records-admin"><div className="section-heading"><div><p className="step-label">CONTROL DE PUNTUACIONES</p><h3>Récords de los minijuegos</h3><p>Reiniciar deja el récord en cero y conserva los puntos. Eliminar borra completamente el resultado del bonus.</p></div><button className="danger-outline-button" disabled={!records.length || busyAction === "records-reset-all"} onClick={() => setRecordAction({ mode: "resetAll" })}>{busyAction === "records-reset-all" ? "Restableciendo…" : "Restablecer todos"}</button></div><div className="user-search record-search"><UiIcon name="gamepad" /><input value={recordSearch} onChange={(event) => setRecordSearch(event.target.value)} placeholder="Buscar por colaborador, UAD o juego..." /></div>{filteredRecords.length ? <div className="record-management-list">{filteredRecords.map((record) => <article key={record.id}><span className="record-game-icon" style={{ "--record-color": bonusRecordColor(record.gameId) } as React.CSSProperties}><UiIcon name="gamepad" /></span><div><b>{record.gameName}</b><small>{record.userName} · {record.uad || "Sin UAD"}</small><i>{record.completedAt ? new Date(record.completedAt).toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" }) : "Sin fecha"}</i></div><div className="record-values"><span><small>RÉCORD</small><b>{record.record}</b></span><span><small>PUNTOS</small><b>{record.score}</b></span></div><div className="record-actions"><button disabled={busyAction === `reset-record-${record.id}`} onClick={() => setRecordAction({ record, mode: "reset" })}>Reiniciar</button><button className="danger-outline" disabled={busyAction === `delete-record-${record.id}`} onClick={() => setRecordAction({ record, mode: "delete" })}><UiIcon name="trash" /> Eliminar</button></div></article>)}</div> : <div className="empty-state"><span><UiIcon name="gamepad" /></span><h3>No hay récords para mostrar</h3><p>Los resultados aparecerán aquí después de guardar una partida.</p></div>}</div>
     : <div className="evidence-admin"><div className="section-heading"><div><p className="step-label">VALIDACIÓN VISUAL</p><h3>Evidencias recientes</h3><p>Los archivos se consultan solo al abrir Administración.</p></div><button className="secondary-button" onClick={onRefresh}>Actualizar ↻</button></div>{evidence.length ? <div className="evidence-grid">{evidence.map((item) => <article key={item.id}><span className="evidence-type"><UiIcon name="camera" /></span><div><b>{item.userName}</b><small>{item.missionTitle}</small><p>{item.fileName} · {(item.size / 1024 / 1024).toFixed(1)} MB</p></div><a href={item.url} target="_blank" rel="noreferrer">Revisar ↗</a></article>)}</div> : <div className="empty-state"><span><UiIcon name="camera" /></span><h3>Aún no hay evidencias</h3><p>Las fotos y videos aparecerán aquí cuando los participantes validen sus misiones.</p></div>}</div>}
 
     {editTarget && <div className="admin-confirm-backdrop" role="dialog" aria-modal="true" aria-label="Editar misión"><form className="admin-edit-modal" onSubmit={editMission}><button className="close-button" type="button" onClick={() => setEditTarget(null)}>×</button><p className="step-label">EDITAR MISIÓN</p><h3>{editTarget.title}</h3><label>Nombre<input name="title" defaultValue={editTarget.title} maxLength={120} required /></label><label>Estación<select name="station" defaultValue={editTarget.station}>{stations.map((s) => <option key={s.name}>{s.name}</option>)}</select></label><label>Descripción<textarea name="description" defaultValue={editTarget.description} maxLength={700} required /></label><div className="field-row"><label>Duración<input name="duration" defaultValue={editTarget.duration} maxLength={30} /></label><label>Puntos<input name="points" type="number" defaultValue={editTarget.points} min="10" max="1000" required /></label></div><label>Audiencia<select name="audience" defaultValue={editTarget.audience}><option>Todas las UAD</option>{uadOptions.map((uad) => <option key={uad}>{uad}</option>)}</select></label><label className="toggle-field"><input type="checkbox" name="evidenceRequired" defaultChecked={editTarget.evidenceRequired} /><span><b>Exigir evidencia</b><small>Foto o video para completar</small></span></label><label className="toggle-field warning"><input type="checkbox" name="regenerateCode" /><span><b>Generar un código nuevo</b><small>El código anterior dejará de funcionar</small></span></label><button className="primary-button" type="submit" disabled={busyAction === `edit-${editTarget.id}`}>{busyAction === `edit-${editTarget.id}` ? <><LoadingDot /> Guardando...</> : <>Guardar cambios <UiIcon name="check" /></>}</button></form></div>}
@@ -1075,6 +1100,7 @@ function AdminPage({ missions, people, evidence, badges, uadOptions, busyAction,
     {badgeDeleteTarget && <div className="admin-confirm-backdrop" role="dialog" aria-modal="true"><div className="admin-confirm"><span><UiIcon name="badge" /></span><h3>¿Retirar esta insignia?</h3><p><b>{badgeDeleteTarget.title}</b> dejará de aparecer, pero no se modificará el progreso de ningún usuario.</p><div><button className="secondary-button" onClick={() => setBadgeDeleteTarget(null)}>Cancelar</button><button className="danger-button" onClick={async () => { if (await onDeleteBadge(badgeDeleteTarget)) setBadgeDeleteTarget(null); }}>Retirar insignia</button></div></div></div>}
     {userEditTarget && <div className="admin-confirm-backdrop" role="dialog" aria-modal="true" aria-label="Editar usuario"><form className="admin-edit-modal user-edit-modal" onSubmit={editUser}><button className="close-button" type="button" onClick={() => setUserEditTarget(null)}>×</button><p className="step-label">EDITAR USUARIO</p><h3>{userEditTarget.name}</h3><label>Nombre completo<input name="name" defaultValue={userEditTarget.name} maxLength={120} required /></label><div className="field-row"><label>Cédula<input name="cedula" defaultValue={userEditTarget.cedula} maxLength={25} required /></label><label>Teléfono<input name="phone" defaultValue={userEditTarget.phone || ""} maxLength={30} /></label></div><label>Correo<input name="email" type="email" defaultValue={userEditTarget.email} maxLength={160} required /></label><div className="field-row"><label>Cargo<input name="cargo" defaultValue={userEditTarget.cargo || ""} maxLength={120} /></label><label>UAD<select name="uad" defaultValue={userEditTarget.uad}>{uadOptions.map((uad) => <option key={uad}>{uad}</option>)}</select></label></div><p className="edit-session-note">Por seguridad, al guardar se cerrarán las sesiones activas de este usuario.</p><button className="primary-button" type="submit" disabled={busyAction === `edit-user-${userEditTarget.id}`}>{busyAction === `edit-user-${userEditTarget.id}` ? <><LoadingDot /> Guardando...</> : <>Guardar usuario <UiIcon name="check" /></>}</button></form></div>}
     {userDeleteTarget && <div className="admin-confirm-backdrop" role="dialog" aria-modal="true"><div className="admin-confirm"><span><UiIcon name="trash" /></span><h3>¿Eliminar este usuario?</h3><p><b>{userDeleteTarget.name}</b> perderá el acceso. Su cédula y correo quedarán libres para registrar el pasaporte nuevamente; el historial anterior se conservará de forma anónima.</p><div><button className="secondary-button" onClick={() => setUserDeleteTarget(null)}>Cancelar</button><button className="danger-button" onClick={async () => { if (await onDeleteUser(userDeleteTarget)) setUserDeleteTarget(null); }}>Eliminar usuario</button></div></div></div>}
+    {recordAction && <div className="admin-confirm-backdrop" role="dialog" aria-modal="true" aria-label="Administrar récord"><div className="admin-confirm record-confirm"><span><UiIcon name={recordAction.mode === "delete" ? "trash" : "gamepad"} /></span><h3>{recordAction.mode === "delete" ? "¿Eliminar este resultado?" : recordAction.mode === "resetAll" ? "¿Restablecer todos los récords?" : "¿Reiniciar este récord?"}</h3><p>{recordAction.mode === "delete" ? <><b>{recordAction.record?.userName}</b> perderá este bonus, sus puntos y su lugar en el ranking.</> : recordAction.mode === "resetAll" ? <>Todos los récords quedarán en <b>cero</b>. Los puntos y bonus completados de los colaboradores se conservarán.</> : <>El récord de <b>{recordAction.record?.userName}</b> en {recordAction.record?.gameName} quedará en cero, pero conservará los puntos obtenidos.</>}</p><div><button className="secondary-button" onClick={() => setRecordAction(null)}>Cancelar</button><button className={recordAction.mode === "delete" ? "danger-button" : "primary-button"} onClick={async () => { if (await onManageRecord(recordAction.record?.id || "", recordAction.mode)) setRecordAction(null); }}>{recordAction.mode === "delete" ? "Eliminar resultado" : recordAction.mode === "resetAll" ? "Restablecer todos" : "Reiniciar a cero"}</button></div></div></div>}
     {recoveryCode && <div className="admin-confirm-backdrop" role="dialog" aria-modal="true"><div className="admin-confirm recovery-code-card"><span><UiIcon name="key" /></span><h3>Código de respaldo</h3><p>Entrégalo únicamente a <b>{recoveryCode.person.name}</b>. Caduca en 24 horas y funciona una sola vez.</p><code>{recoveryCode.code}</code><div><button className="primary-button" onClick={() => setRecoveryCode(null)}>Entendido</button></div></div></div>}
   </div>;
 }
@@ -1099,4 +1125,9 @@ function badgeCriterionLabel(badge: BadgeDefinition) {
   if (badge.criterion === "STATION") return badge.station || "Estación específica";
   if (badge.criterion === "ALL_MISSIONS") return "Pasaporte completo";
   return "Misiones completadas";
+}
+
+function bonusRecordColor(gameId: BonusGameId) {
+  const colors: Partial<Record<BonusGameId, string>> = { "word-search": "#9d5cff", sudoku: "#12cfe0", target: "#ff5c9b", "forest-run": "#35a66f", "station-pairs": "#f2a800", "wellbeing-flight": "#3c9ee8" };
+  return colors[gameId] || "#7253dc";
 }

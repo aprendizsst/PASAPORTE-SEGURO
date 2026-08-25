@@ -9,7 +9,9 @@ Versión completa de la aplicación web para GitHub Pages y Google Apps Script. 
 - Panel administrador con creación, edición, eliminación segura, códigos únicos y seguimiento de misiones.
 - Creador de avatares 3D con seis tonos de piel, siete colores y estilos de cabello, ocho colores de camiseta, hasta tres accesorios simultáneos y colores independientes.
 - Zona Bonus con seis juegos: sopa de letras 10×10 variable, sudoku 9×9 con solución única, tiro al blanco por dos ejes, Carrera del Bosque inspirada en el T-Rex pero con árboles, Parejas del Festival con las seis estaciones y Vuelo del Bienestar con temática de autocuidado y pautas ambientales.
-- Salón de récords colaborativo cargado bajo demanda: conserva el mejor resultado individual y muestra los diez primeros puestos por juego sin aumentar el peso del inicio de sesión.
+- Salón de récords colaborativo cargado bajo demanda: conserva el mejor resultado individual, actualiza el ranking después de guardar y muestra los diez primeros puestos por juego sin aumentar el peso del inicio de sesión.
+- Administración de récords con búsqueda, reinicio individual o global a cero —sin retirar puntos— y eliminación completa del resultado cuando se necesita corregir una partida.
+- Parejas del Festival con doce cartas ilustradas en SVG: cada estación cuenta con una imagen temática reconocible y adaptable a móvil.
 - **Ruta Viva del Festival 3D** con las seis islas siempre visibles —incluida Ambiental—, nave espacial, avatar visible en la cabina y acceso filtrado a las misiones de cada estación.
 - Colección de insignias administrable: creación, edición, retiro, 16 iconos SVG, dos colores, criterios y metas configurables. Las insignias tienen acabado coleccionable con medallón, cinta, relieve, animación y estados de progreso.
 - Diploma A4 moderno en PDF, sin avatar, con fondo editorial, marco corporativo multicapa, medalla de puntos, sellos dentados e insignias vectoriales; conserva logos y textos adaptables.

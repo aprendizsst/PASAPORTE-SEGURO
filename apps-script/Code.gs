@@ -34,6 +34,7 @@ const CACHE_KEYS = {
   ADMIN_DASHBOARD: "pasaporte:admin-dashboard:v2",
   SESSION_CLEANUP: "pasaporte:session-cleanup:v1",
   ADMIN_EVIDENCE: "pasaporte:admin-evidence:v1",
+  ADMIN_BONUS_RECORDS: "pasaporte:admin-bonus-records:v1",
   BADGES: "pasaporte:badges:v1",
   BONUS_LEADERBOARD: "pasaporte:bonus-leaderboard:v1",
   SCHEMA: "pasaporte:schema:v7",
@@ -47,10 +48,10 @@ const CACHE_TTL = {
   ACTIVITY: 600,
 };
 
-const WRITE_ACTIONS = ["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "verifyPasswordResetCode", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode"];
+const WRITE_ACTIONS = ["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "verifyPasswordResetCode", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode", "adminManageBonusRecord"];
 
 function doGet() {
-  return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.2.13" } });
+  return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.2.14" } });
 }
 
 function doPost(event) {
@@ -87,6 +88,7 @@ function doPost(event) {
     else if (action === "adminEditUser") data = adminEditUserApi_(request);
     else if (action === "adminDeleteUser") data = adminDeleteUserApi_(request);
     else if (action === "adminCreateRecoveryCode") data = adminCreateRecoveryCodeApi_(request);
+    else if (action === "adminManageBonusRecord") data = adminManageBonusRecordApi_(request);
     else if (action === "adminDashboard") data = adminDashboardApi_(request);
     else throw new Error("Acción no reconocida.");
 
@@ -392,7 +394,8 @@ function completeBonusApi_(request) {
   const scoreLimits = { "word-search": 80, "sudoku": 120, "target": 200, "forest-run": 300, "station-pairs": 250, "wellbeing-flight": 300 };
   const recordLimits = { "word-search": 80, "sudoku": 120, "target": 500, "forest-run": 5000, "station-pairs": 340, "wellbeing-flight": 500 };
   const score = Math.max(0, Math.min(scoreLimits[gameId], Number(request.score) || 0));
-  const record = Math.max(0, Math.min(recordLimits[gameId], Number(request.record) || score));
+  const requestedRecord = request.record === undefined || request.record === null || request.record === "" ? score : Number(request.record);
+  const record = Math.max(0, Math.min(recordLimits[gameId], Number(requestedRecord) || 0));
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(4000)) throw new Error("Estamos guardando otros resultados. Intenta nuevamente en un momento.");
   let bestScore = score;
@@ -401,7 +404,7 @@ function completeBonusApi_(request) {
     CacheService.getScriptCache().remove(bonusCacheKey_(user.Id));
     const current = findObjectsByField_(SHEETS.BONUS, "UsuarioId", user.Id, String).find(function (row) { return String(row.JuegoId) === gameId; });
     if (current) {
-      const currentRecord = Number(current.Record) || Number(current.Puntaje) || 0;
+      const currentRecord = bonusRecordValue_(current);
       bestScore = Math.max(Number(current.Puntaje) || 0, score);
       bestRecord = Math.max(currentRecord, record);
       updateObjectRow_(SHEETS.BONUS, current._row, { Puntaje: bestScore, Record: bestRecord, CompletadoEn: record > currentRecord ? new Date() : current.CompletadoEn || new Date() });
@@ -409,6 +412,11 @@ function completeBonusApi_(request) {
   } finally { lock.releaseLock(); }
   invalidateUserActivity_(user.Id);
   return { gameId: gameId, score: score, bestScore: bestScore, bestRecord: bestRecord, completed: true };
+}
+
+function bonusRecordValue_(row) {
+  if (row.Record === "" || row.Record === null || row.Record === undefined) return Number(row.Puntaje) || 0;
+  return Math.max(0, Number(row.Record) || 0);
 }
 
 function bonusLeaderboardApi_(request) {
@@ -420,16 +428,16 @@ function bonusLeaderboardApi_(request) {
       users[String(user.Id)] = { name: String(user.Nombre || "Participante"), uad: String(user.UAD || "") };
     });
     const rankedGames = ["forest-run", "station-pairs", "wellbeing-flight", "target"];
-    const bonus = sheetObjects_(SHEETS.BONUS).filter(function (row) { return users[String(row.UsuarioId)] && rankedGames.indexOf(String(row.JuegoId)) >= 0; });
+    const bonus = sheetObjects_(SHEETS.BONUS).filter(function (row) { return users[String(row.UsuarioId)] && rankedGames.indexOf(String(row.JuegoId)) >= 0 && bonusRecordValue_(row) > 0; });
     rows = [];
     rankedGames.forEach(function (gameId) {
       bonus.filter(function (row) { return String(row.JuegoId) === gameId; }).sort(function (a, b) {
-        const aRecord = Number(a.Record) || Number(a.Puntaje) || 0;
-        const bRecord = Number(b.Record) || Number(b.Puntaje) || 0;
+        const aRecord = bonusRecordValue_(a);
+        const bRecord = bonusRecordValue_(b);
         return bRecord - aRecord || new Date(a.CompletadoEn).getTime() - new Date(b.CompletadoEn).getTime();
       }).slice(0, 10).forEach(function (row) {
         const person = users[String(row.UsuarioId)];
-        rows.push({ userId: String(row.UsuarioId), gameId: gameId, name: person.name, uad: person.uad, record: Number(row.Record) || Number(row.Puntaje) || 0, completedAt: row.CompletadoEn ? new Date(row.CompletadoEn).toISOString() : "" });
+        rows.push({ userId: String(row.UsuarioId), gameId: gameId, name: person.name, uad: person.uad, record: bonusRecordValue_(row), completedAt: row.CompletadoEn ? new Date(row.CompletadoEn).toISOString() : "" });
       });
     });
     cachePut_(CACHE_KEYS.BONUS_LEADERBOARD, rows, 60);
@@ -564,7 +572,7 @@ function adminEditUserApi_(request) {
     cacheUser_(updated);
   } finally { lock.releaseLock(); }
   invalidateAdminDashboard_();
-  CacheService.getScriptCache().remove(CACHE_KEYS.BONUS_LEADERBOARD);
+  CacheService.getScriptCache().removeAll([CACHE_KEYS.BONUS_LEADERBOARD, CACHE_KEYS.ADMIN_BONUS_RECORDS]);
   return { user: { id: String(user.Id), name: name, cedula: cedula, phone: phone, email: email, cargo: cargo, uad: uad } };
 }
 
@@ -583,7 +591,7 @@ function adminDeleteUserApi_(request) {
   revokeUserSessions_(user.Id);
   invalidateUserCache_(user);
   invalidateAdminDashboard_();
-  CacheService.getScriptCache().remove(CACHE_KEYS.BONUS_LEADERBOARD);
+  CacheService.getScriptCache().removeAll([CACHE_KEYS.BONUS_LEADERBOARD, CACHE_KEYS.ADMIN_BONUS_RECORDS]);
   return { userId: String(user.Id), deleted: true };
 }
 
@@ -596,9 +604,60 @@ function adminCreateRecoveryCodeApi_(request) {
   return { userId: String(user.Id), code: code, expiresInHours: 24 };
 }
 
+function adminManageBonusRecordApi_(request) {
+  requireAdmin_(request.token);
+  const mode = String(request.mode || "");
+  if (["reset", "delete", "resetAll"].indexOf(mode) < 0) throw new Error("Operación de récord no permitida.");
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) throw new Error("Hay otra actualización de récords en curso. Intenta nuevamente.");
+  let affectedUsers = [];
+  let result;
+  try {
+    const sheet = getSheet_(SHEETS.BONUS);
+    if (mode === "resetAll") {
+      const rows = sheetObjects_(SHEETS.BONUS);
+      affectedUsers = rows.map(function (row) { return String(row.UsuarioId); });
+      if (rows.length) sheet.getRange(2, headerColumn_(SHEETS.BONUS, "Record"), rows.length, 1).setValues(rows.map(function () { return [0]; }));
+      result = { mode: mode, affected: rows.length };
+    } else {
+      const record = sheetObjects_(SHEETS.BONUS).find(function (row) { return String(row.Id) === String(request.recordId || ""); });
+      if (!record) throw new Error("El resultado ya no existe.");
+      affectedUsers = [String(record.UsuarioId)];
+      if (mode === "reset") updateObjectRow_(SHEETS.BONUS, record._row, { Record: 0 });
+      else sheet.deleteRow(record._row);
+      result = { mode: mode, recordId: String(record.Id), userId: String(record.UsuarioId), gameId: String(record.JuegoId) };
+    }
+  } finally { lock.releaseLock(); }
+  invalidateBonusManagementCaches_(affectedUsers);
+  return result;
+}
+
 function adminDashboardApi_(request) {
   requireAdmin_(request.token);
-  return { people: buildAdminPeople_(), missions: activeMissions_().map(adminMission_), evidence: buildAdminEvidence_(), badges: activeBadges_() };
+  return { people: buildAdminPeople_(), missions: activeMissions_().map(adminMission_), evidence: buildAdminEvidence_(), records: buildAdminBonusRecords_(), badges: activeBadges_() };
+}
+
+function buildAdminBonusRecords_() {
+  const cached = cacheGet_(CACHE_KEYS.ADMIN_BONUS_RECORDS);
+  if (cached) return cached;
+  const users = {};
+  sheetObjects_(SHEETS.USERS).forEach(function (user) { users[String(user.Id)] = { name: String(user.Nombre || "Usuario eliminado"), uad: String(user.UAD || "") }; });
+  const names = { "word-search": "Ruta de palabras", sudoku: "Sudoku seguro", target: "Tiro al riesgo", "forest-run": "Carrera del bosque", "station-pairs": "Parejas del festival", "wellbeing-flight": "Vuelo del bienestar" };
+  const result = sheetObjects_(SHEETS.BONUS).sort(function (a, b) { return new Date(b.CompletadoEn).getTime() - new Date(a.CompletadoEn).getTime(); }).map(function (row) {
+    const user = users[String(row.UsuarioId)] || { name: "Usuario eliminado", uad: "" };
+    return { id: String(row.Id), userId: String(row.UsuarioId), userName: user.name, uad: user.uad, gameId: String(row.JuegoId), gameName: names[String(row.JuegoId)] || String(row.JuegoId), score: Number(row.Puntaje) || 0, record: bonusRecordValue_(row), completedAt: row.CompletadoEn ? new Date(row.CompletadoEn).toISOString() : "" };
+  });
+  cachePut_(CACHE_KEYS.ADMIN_BONUS_RECORDS, result, 30);
+  return result;
+}
+
+function invalidateBonusManagementCaches_(userIds) {
+  const unique = {};
+  (userIds || []).forEach(function (userId) { if (userId) unique[String(userId)] = true; });
+  const keys = Object.keys(unique).map(bonusCacheKey_);
+  keys.push(CACHE_KEYS.ADMIN_DASHBOARD, CACHE_KEYS.ADMIN_BONUS_RECORDS, CACHE_KEYS.BONUS_LEADERBOARD);
+  const cache = CacheService.getScriptCache();
+  for (let index = 0; index < keys.length; index += 90) cache.removeAll(keys.slice(index, index + 90));
 }
 
 function userBundle_(user) {
@@ -616,7 +675,7 @@ function userBundle_(user) {
   const bonusRecords = {};
   bonusRows.forEach(function (row) {
     bonusScores[String(row.JuegoId)] = Number(row.Puntaje) || 0;
-    bonusRecords[String(row.JuegoId)] = Number(row.Record) || Number(row.Puntaje) || 0;
+    bonusRecords[String(row.JuegoId)] = bonusRecordValue_(row);
   });
   return { user: publicUser_(user), missions: missions.map(publicMission_), historyMissions: historyMissions, completed: completed, started: started, history: history, bonusCompleted: Object.keys(bonusScores), bonusScores: bonusScores, bonusRecords: bonusRecords, badgeDefinitions: activeBadges_() };
 }
@@ -918,7 +977,7 @@ function activityRowsForUser_(sheetName, userId, keyBuilder) {
 }
 
 function invalidateUserActivity_(userId) {
-  CacheService.getScriptCache().removeAll([progressCacheKey_(userId), bonusCacheKey_(userId), CACHE_KEYS.ADMIN_DASHBOARD, CACHE_KEYS.BONUS_LEADERBOARD]);
+  CacheService.getScriptCache().removeAll([progressCacheKey_(userId), bonusCacheKey_(userId), CACHE_KEYS.ADMIN_DASHBOARD, CACHE_KEYS.ADMIN_BONUS_RECORDS, CACHE_KEYS.BONUS_LEADERBOARD]);
 }
 
 function invalidateMissionCaches_() {
