@@ -1,6 +1,6 @@
 # Actualización segura a Pasaporte Seguro 3.2
 
-> Revisión 3.2.18: se crea una composición específica para la pestaña Bonus en computador. Los modales vuelven a estar centrados, el tablero de Parejas utiliza cartas horizontales más bajas, los espacios del encabezado y resultados se reducen y todos los juegos conservan desplazamiento de respaldo dentro del modal. En móvil se mantiene el desplazamiento de pantalla completa de 3.2.17.
+> Revisión 3.2.19: los minijuegos ahora se renderizan en un portal global conectado al `body`. Esto evita que las transformaciones y animaciones del libro limiten el fondo, la altura o el centrado del modal en computador. El modal se calcula contra la ventana real, conserva desplazamiento cuando hace falta y mantiene intacta la vista móvil. También se añade un favicon corporativo para eliminar la solicitud 404 del navegador.
 
 > Revisión 3.2.17: se retira el contenedor flexible interno introducido en 3.2.16, porque podía crecer fuera del viewport y dejar el juego sin desplazamiento. Ahora todo el fondo del minijuego es la superficie desplazable, el modal comienza en la parte superior, conserva el encabezado visible y permite llegar sin bloqueo hasta los botones finales.
 
