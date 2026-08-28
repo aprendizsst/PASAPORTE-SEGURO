@@ -1,6 +1,6 @@
 # Actualización segura a Pasaporte Seguro 3.2
 
-> Revisión 3.2.20: se corrige el Salón de récords. Al cargar, selecciona automáticamente la categoría que contiene el récord del usuario o la primera que tenga resultados; cada pestaña muestra su cantidad; el estado vacío es más compacto; el botón Actualizar fuerza una consulta nueva; y los resultados de administradores activos también pueden aparecer en el ranking. Conserva la corrección global de modales y el favicon de 3.2.19.
+> Revisión 3.2.21: la imagen 1+1=3 se integra de forma permanente en el encabezado de todas las páginas internas, dentro de un espacio propio que no cubre contenidos y se simplifica en móvil. Se precarga una sola vez y se reutiliza desde la caché del navegador. Se optimizan las lecturas repetidas, el guardado local de sesión, la precarga del módulo Bonus, las consultas por filas en Apps Script y el ranking. Los juegos pausan trabajo cuando la pestaña no está visible, liberan temporizadores al cerrarse y reutilizan fondos de canvas ya dibujados; el tiro al blanco reduce renderizados innecesarios.
 
 > Revisión 3.2.17: se retira el contenedor flexible interno introducido en 3.2.16, porque podía crecer fuera del viewport y dejar el juego sin desplazamiento. Ahora todo el fondo del minijuego es la superficie desplazable, el modal comienza en la parte superior, conserva el encabezado visible y permite llegar sin bloqueo hasta los botones finales.
 

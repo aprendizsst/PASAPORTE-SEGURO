@@ -51,7 +51,7 @@ const CACHE_TTL = {
 const WRITE_ACTIONS = ["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "verifyPasswordResetCode", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode", "adminManageBonusRecord"];
 
 function doGet() {
-  return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.2.20" } });
+  return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.2.21" } });
 }
 
 function doPost(event) {
@@ -441,7 +441,7 @@ function bonusLeaderboardApi_(request) {
         rows.push({ userId: String(row.UsuarioId), gameId: gameId, name: person.name, uad: person.uad, record: bonusRecordValue_(row), completedAt: row.CompletadoEn ? new Date(row.CompletadoEn).toISOString() : "" });
       });
     });
-    cachePut_(CACHE_KEYS.BONUS_LEADERBOARD, rows, 60);
+    cachePut_(CACHE_KEYS.BONUS_LEADERBOARD, rows, 120);
   }
   return { entries: rows.map(function (row) { return { gameId: row.gameId, name: row.name, uad: row.uad, record: row.record, completedAt: row.completedAt, isCurrent: String(row.userId) === String(currentUser.Id) }; }), updatedAt: new Date().toISOString() };
 }
@@ -1139,7 +1139,23 @@ function findObjectsByField_(name, field, value, normalizer) {
     const values = searchRange.getDisplayValues();
     values.forEach(function (row, index) { if (normalizer(row[0]) === target) rowNumbers.push(index + 2); });
   }
-  return rowNumbers.map(function (rowNumber) { return objectAtRow_(name, rowNumber); }).filter(function (object) { return normalizer(object[field]) === target; });
+  if (!rowNumbers.length) return [];
+  const headers = headersForSheet_(name);
+  const firstRow = Math.min.apply(null, rowNumbers);
+  const lastMatchRow = Math.max.apply(null, rowNumbers);
+  if (lastMatchRow - firstRow > 500 && rowNumbers.length < 18) {
+    return rowNumbers.map(function (rowNumber) { return objectAtRow_(name, rowNumber); }).filter(function (object) { return normalizer(object[field]) === target; });
+  }
+  const selectedRows = {};
+  rowNumbers.forEach(function (rowNumber) { selectedRows[rowNumber] = true; });
+  const values = sheet.getRange(firstRow, 1, lastMatchRow - firstRow + 1, headers.length).getValues();
+  return values.map(function (row, index) {
+    const rowNumber = firstRow + index;
+    if (!selectedRows[rowNumber]) return null;
+    const object = { _row: rowNumber };
+    headers.forEach(function (header, columnIndex) { object[header] = row[columnIndex]; });
+    return object;
+  }).filter(function (object) { return object && normalizer(object[field]) === target; });
 }
 
 function findObjectByField_(name, field, value, normalizer) {

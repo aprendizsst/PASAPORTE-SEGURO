@@ -267,11 +267,12 @@ function TargetGame({ completed, busy, onComplete }: { completed: boolean; busy:
 
   useEffect(() => {
     if (phase !== "horizontal" && phase !== "vertical") return;
-    const startedAt = Date.now() + Math.random() * 900;
+    const startedAt = performance.now() + Math.random() * 900;
     const timer = setInterval(() => {
-      const position = 50 + 44 * Math.sin((Date.now() - startedAt) / (phase === "horizontal" ? 360 : 310));
+      if (document.hidden) return;
+      const position = 50 + 44 * Math.sin((performance.now() - startedAt) / (phase === "horizontal" ? 360 : 310));
       if (phase === "horizontal") setXAim(position); else setYAim(position);
-    }, 24);
+    }, 40);
     return () => clearInterval(timer);
   }, [phase]);
 
@@ -332,6 +333,10 @@ function BonusLeaderboard({ entries, loading, onRefresh }: { entries: BonusLeade
 
 type ArcadePhase = "ready" | "running" | "finished";
 
+function gameFrameInterval() {
+  return typeof navigator !== "undefined" && (navigator.hardwareConcurrency || 4) <= 4 ? 30 : 16;
+}
+
 function ForestRunGame({ bestRecord, busy, onComplete }: { bestRecord: number; busy: boolean; onComplete: (score: number, record: number) => Promise<void> }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frameRef = useRef(0);
@@ -363,6 +368,8 @@ function ForestRunGame({ bestRecord, busy, onComplete }: { bestRecord: number; b
     let previous = performance.now();
     let reportedDistance = Math.floor(engineRef.current.distance);
     const render = (now: number) => {
+      if (document.hidden) { previous = now; frameRef.current = requestAnimationFrame(render); return; }
+      if (now - previous < gameFrameInterval()) { frameRef.current = requestAnimationFrame(render); return; }
       const dt = Math.min(34, now - previous || 16); previous = now;
       const engine = engineRef.current;
       if (phase === "running") {
@@ -395,12 +402,24 @@ function ForestRunGame({ bestRecord, busy, onComplete }: { bestRecord: number; b
   return <div className="game-body arcade-game forest-run-game"><div className="arcade-hud"><span><small>DISTANCIA</small><b>{distance} m</b></span><span><small>TU RÉCORD</small><b>{bestRecord} m</b></span><span><small>CONTROL</small><b>ESPACIO / TOQUE</b></span></div><div className="arcade-canvas-wrap" onPointerDown={jump}><canvas ref={canvasRef} width="760" height="210" aria-label="Carrera del bosque: salta sobre los árboles" />{phase === "ready" && <div className="arcade-overlay"><b>Carrera del bosque</b><p>Salta los árboles y llega tan lejos como puedas.</p><button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={start}>Comenzar carrera</button></div>}{phase === "finished" && <div className="arcade-overlay result"><b>{distance > bestRecord ? "¡Nuevo récord personal!" : "Fin del recorrido"}</b><p>Recorriste {distance} metros · recompensa de {reward} puntos.</p><div><button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={start}>Reintentar</button><button className="save-record" type="button" disabled={busy || distance < 1} onPointerDown={(event) => event.stopPropagation()} onClick={() => onComplete(reward, distance)}>{busy ? "Guardando…" : "Guardar récord"}</button></div></div>}</div><p className="arcade-tip">En computador usa espacio o ↑. En celular toca el área del juego para saltar.</p></div>;
 }
 
-function drawForestRun(context: CanvasRenderingContext2D, engine: { jump: number; distance: number; trees: { x: number; height: number; crown: number }[] }, phase: ArcadePhase) {
+let forestBackground: HTMLCanvasElement | null = null;
+
+function getForestBackground() {
+  if (forestBackground) return forestBackground;
+  forestBackground = document.createElement("canvas"); forestBackground.width = 760; forestBackground.height = 210;
+  const context = forestBackground.getContext("2d");
+  if (!context) return forestBackground;
   const width = 760; const height = 210; const ground = 176;
   const sky = context.createLinearGradient(0, 0, 0, height); sky.addColorStop(0, "#dff7ff"); sky.addColorStop(1, "#f5fbdf"); context.fillStyle = sky; context.fillRect(0, 0, width, height);
   context.fillStyle = "rgba(255,255,255,.78)"; [[90, 38], [330, 62], [610, 35]].forEach(([x, y]) => { context.beginPath(); context.arc(x, y, 18, 0, Math.PI * 2); context.arc(x + 22, y + 3, 25, 0, Math.PI * 2); context.arc(x + 48, y, 16, 0, Math.PI * 2); context.fill(); });
   context.fillStyle = "#9bd36f"; context.beginPath(); context.moveTo(0, 150); for (let x = 0; x <= width; x += 80) context.quadraticCurveTo(x + 40, 112 + ((x / 80) % 2) * 14, x + 80, 150); context.lineTo(width, ground); context.lineTo(0, ground); context.fill();
-  context.fillStyle = "#e9d8ae"; context.fillRect(0, ground, width, height - ground); context.fillStyle = "#b89d67"; for (let x = -(engine.distance * 5) % 42; x < width; x += 42) context.fillRect(x, ground + 17, 20, 2);
+  context.fillStyle = "#e9d8ae"; context.fillRect(0, ground, width, height - ground);
+  return forestBackground;
+}
+
+function drawForestRun(context: CanvasRenderingContext2D, engine: { jump: number; distance: number; trees: { x: number; height: number; crown: number }[] }, phase: ArcadePhase) {
+  const width = 760; const height = 210; const ground = 176;
+  context.drawImage(getForestBackground(), 0, 0); context.fillStyle = "#b89d67"; for (let x = -(engine.distance * 5) % 42; x < width; x += 42) context.fillRect(x, ground + 17, 20, 2);
   engine.trees.forEach((tree) => { const top = ground - tree.height; context.fillStyle = "#7a4c2b"; context.fillRect(tree.x + 14, top + 18, 13, tree.height - 18); context.fillStyle = "#2f9d63"; context.beginPath(); context.arc(tree.x + 20, top + 10, tree.crown, 0, Math.PI * 2); context.arc(tree.x + 4, top + 20, tree.crown * .67, 0, Math.PI * 2); context.arc(tree.x + 38, top + 21, tree.crown * .7, 0, Math.PI * 2); context.fill(); context.fillStyle = "#66bf75"; context.beginPath(); context.arc(tree.x + 10, top + 4, tree.crown * .35, 0, Math.PI * 2); context.fill(); });
   const y = ground - 42 - engine.jump; context.save(); context.translate(72, y); context.fillStyle = phase === "finished" ? "#758394" : "#6750c8"; context.fillRect(2, 11, 31, 25); context.beginPath(); context.moveTo(25, 12); context.lineTo(39, 7); context.lineTo(38, 24); context.lineTo(28, 25); context.fill(); context.fillStyle = "#fff"; context.beginPath(); context.arc(33, 13, 2.6, 0, Math.PI * 2); context.fill(); context.strokeStyle = "#42327f"; context.lineWidth = 5; context.lineCap = "round"; context.beginPath(); context.moveTo(10, 35); context.lineTo(7, 43); context.moveTo(25, 35); context.lineTo(29, 43); context.stroke(); context.restore();
 }
@@ -433,6 +452,7 @@ function StationPairsGame({ bestRecord, busy, onComplete }: { bestRecord: number
   const [moves, setMoves] = useState(0);
   const [seconds, setSeconds] = useState(0);
   const [locked, setLocked] = useState(false);
+  const flipTimer = useRef<number | null>(null);
   const record = Math.max(80, 340 - moves * 9 - seconds * 2);
   const reward = Math.min(250, 80 + Math.round(record / 2));
 
@@ -442,17 +462,20 @@ function StationPairsGame({ bestRecord, busy, onComplete }: { bestRecord: number
     return () => clearInterval(timer);
   }, [phase]);
 
-  function start() { setDeck(createPairDeck()); setOpen([]); setMatched([]); setMoves(0); setSeconds(0); setLocked(false); setPhase("running"); }
+  useEffect(() => () => { if (flipTimer.current !== null) window.clearTimeout(flipTimer.current); }, []);
+
+  function start() { if (flipTimer.current !== null) window.clearTimeout(flipTimer.current); setDeck(createPairDeck()); setOpen([]); setMatched([]); setMoves(0); setSeconds(0); setLocked(false); setPhase("running"); }
   function flip(index: number) {
     if (phase !== "running" || locked || open.includes(index) || matched.includes(deck[index].id)) return;
     if (!open.length) { setOpen([index]); return; }
     const first = open[0]; setOpen([first, index]); setMoves((current) => current + 1); setLocked(true);
-    window.setTimeout(() => {
+    flipTimer.current = window.setTimeout(() => {
       if (deck[first].id === deck[index].id) {
         const next = [...matched, deck[index].id]; setMatched(next);
         if (next.length === PAIR_STATIONS.length) setPhase("finished");
       }
       setOpen([]); setLocked(false);
+      flipTimer.current = null;
     }, deck[first].id === deck[index].id ? 430 : 760);
   }
 
@@ -483,6 +506,8 @@ function WellbeingFlightGame({ bestRecord, busy, onComplete }: { bestRecord: num
     const context = canvas.getContext("2d"); if (!context) return;
     let previous = performance.now();
     const render = (now: number) => {
+      if (document.hidden) { previous = now; frameRef.current = requestAnimationFrame(render); return; }
+      if (now - previous < gameFrameInterval()) { frameRef.current = requestAnimationFrame(render); return; }
       const dt = Math.min(34, now - previous || 16); previous = now; const engine = engineRef.current;
       if (phase === "running") {
         engine.velocity += .00165 * dt; engine.y += engine.velocity * dt;
@@ -510,10 +535,21 @@ function WellbeingFlightGame({ bestRecord, busy, onComplete }: { bestRecord: num
   return <div className="game-body arcade-game flight-game"><div className="arcade-hud"><span><small>ECOPORTALES</small><b>{gates}</b></span><span><small>TU RÉCORD</small><b>{bestRecord}</b></span><span><small>DIFICULTAD</small><b>{gates < 5 ? "SUAVE" : gates < 12 ? "ACTIVA" : "EXPERTA"}</b></span></div><div className="arcade-canvas-wrap flight" onPointerDown={flap}><canvas ref={canvasRef} width="760" height="320" aria-label="Vuelo del bienestar entre portales ambientales" />{phase === "ready" && <div className="arcade-overlay"><b>Vuelo del bienestar</b><p>Ayuda al corazón alado a cruzar mensajes de autocuidado y pautas ambientales.</p><button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={start}>Empezar a volar</button></div>}{phase === "finished" && <div className="arcade-overlay result"><b>{gates > bestRecord ? "¡Nuevo récord de bienestar!" : "El vuelo terminó"}</b><p>Superaste {gates} ecoportal{gates === 1 ? "" : "es"} · recompensa de {reward} puntos.</p><div><button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={start}>Reintentar</button><button className="save-record" type="button" disabled={busy || gates < 1} onPointerDown={(event) => event.stopPropagation()} onClick={() => onComplete(reward, gates)}>{busy ? "Guardando…" : "Guardar récord"}</button></div></div>}</div><p className="arcade-tip">Pulsa espacio o toca el juego para elevarte. La velocidad aumenta y los portales se hacen más estrechos.</p></div>;
 }
 
-function drawWellbeingFlight(context: CanvasRenderingContext2D, engine: { y: number; gates: number; obstacles: { x: number; gapY: number; gap: number; label: string }[] }) {
+let flightBackground: HTMLCanvasElement | null = null;
+
+function getFlightBackground() {
+  if (flightBackground) return flightBackground;
+  flightBackground = document.createElement("canvas"); flightBackground.width = 760; flightBackground.height = 320;
+  const context = flightBackground.getContext("2d");
+  if (!context) return flightBackground;
   const width = 760; const height = 320; const sky = context.createLinearGradient(0, 0, 0, height); sky.addColorStop(0, "#bcecff"); sky.addColorStop(.62, "#eefbff"); sky.addColorStop(1, "#d8f2cf"); context.fillStyle = sky; context.fillRect(0, 0, width, height);
   context.fillStyle = "rgba(255,255,255,.74)"; [[80, 58], [370, 42], [650, 85]].forEach(([x, y]) => { context.beginPath(); context.arc(x, y, 22, 0, Math.PI * 2); context.arc(x + 25, y - 5, 29, 0, Math.PI * 2); context.arc(x + 55, y + 2, 19, 0, Math.PI * 2); context.fill(); });
   context.fillStyle = "#a6d987"; context.beginPath(); context.moveTo(0, 290); for (let x = 0; x <= width; x += 95) context.quadraticCurveTo(x + 45, 252 - (x % 3) * 4, x + 95, 290); context.lineTo(width, height); context.lineTo(0, height); context.fill();
+  return flightBackground;
+}
+
+function drawWellbeingFlight(context: CanvasRenderingContext2D, engine: { y: number; gates: number; obstacles: { x: number; gapY: number; gap: number; label: string }[] }) {
+  const width = 760; const height = 320; context.drawImage(getFlightBackground(), 0, 0);
   engine.obstacles.forEach((obstacle) => {
     const topEnd = obstacle.gapY - obstacle.gap / 2; const bottomStart = obstacle.gapY + obstacle.gap / 2;
     const portal = context.createLinearGradient(obstacle.x, 0, obstacle.x + 58, 0); portal.addColorStop(0, "#257d64"); portal.addColorStop(.5, "#4fbd77"); portal.addColorStop(1, "#1f6d59"); context.fillStyle = portal; context.fillRect(obstacle.x, 0, 58, topEnd); context.fillRect(obstacle.x, bottomStart, 58, height - bottomStart);

@@ -5,7 +5,8 @@ import type { BonusGameId, BonusLeaderboardEntry } from "./MiniGames";
 import { BadgeCollection, BadgeIcon, buildBadges, FestivalRoute, FinalPassportCard } from "./FestivalExperience";
 import type { BadgeDefinition } from "./FestivalExperience";
 
-const MiniGamesPage = lazy(() => import("./MiniGames"));
+const loadMiniGames = () => import("./MiniGames");
+const MiniGamesPage = lazy(loadMiniGames);
 
 type View = "dashboard" | "guide" | "missions" | "bonus" | "badges" | "history" | "complete" | "admin";
 type Role = "USER" | "ADMIN";
@@ -131,6 +132,7 @@ function passportAccessRequested() {
 
 const SESSION_BUNDLE_KEY = "pasaporte_session_bundle_v4";
 const inflightReads = new Map<string, Promise<unknown>>();
+const apiReadCache = new Map<string, { expiresAt: number; value: unknown }>();
 const WRITE_API_ACTIONS = new Set(["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "verifyPasswordResetCode", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode", "adminManageBonusRecord"]);
 
 function apiPolicy(action: string, payload?: Record<string, unknown>) {
@@ -172,7 +174,13 @@ async function callApi(action: string, payload: Record<string, unknown> = {}) {
   const url = apiUrlOrThrow();
   const requestId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const policy = apiPolicy(action, payload);
-  const inflightKey = action === "catalogs" ? "catalogs" : action === "session" ? `session:${String(payload.token || "")}` : action === "getBonusLeaderboard" && !payload.force ? `bonus-leaderboard:${String(payload.token || "")}` : "";
+  const leaderboardCacheKey = `bonus-leaderboard:${String(payload.token || "")}`;
+  if (action === "getBonusLeaderboard" && payload.force) apiReadCache.delete(leaderboardCacheKey);
+  const inflightKey = action === "catalogs" ? "catalogs" : action === "session" ? `session:${String(payload.token || "")}` : action === "getBonusLeaderboard" && !payload.force ? leaderboardCacheKey : "";
+  const cacheTtl = action === "catalogs" ? 6 * 60 * 60 * 1000 : action === "getBonusLeaderboard" && !payload.force ? 45 * 1000 : 0;
+  const cached = inflightKey && cacheTtl ? apiReadCache.get(inflightKey) : undefined;
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  if (cached) apiReadCache.delete(inflightKey);
 
   const request = async () => {
     let lastError: unknown;
@@ -199,6 +207,7 @@ async function callApi(action: string, payload: Record<string, unknown> = {}) {
           throw new Error("Apps Script no devolvió una respuesta válida. Verifica que la implementación sea pública y termine en /exec.");
         }
         if (!result.ok) throw new Error(result.message || "No fue posible completar la solicitud.");
+        if (inflightKey && cacheTtl) apiReadCache.set(inflightKey, { expiresAt: Date.now() + cacheTtl, value: result.data });
         return result.data;
       } catch (error) {
         lastError = error;
@@ -422,8 +431,17 @@ export default function Home() {
       ...(adminDashboardLoaded ? { adminEvidence } : {}),
       ...(adminDashboardLoaded ? { adminBonusRecords } : {}),
     };
-    localStorage.setItem(SESSION_BUNDLE_KEY, JSON.stringify({ savedAt: Date.now(), bundle } satisfies StoredSession));
+    const saveTimer = window.setTimeout(() => {
+      localStorage.setItem(SESSION_BUNDLE_KEY, JSON.stringify({ savedAt: Date.now(), bundle } satisfies StoredSession));
+    }, 180);
+    return () => window.clearTimeout(saveTimer);
   }, [adminBonusRecords, adminDashboardLoaded, adminEvidence, adminPeople, badgeDefinitions, bonusCompleted, bonusRecords, bonusScores, completed, historyDates, historyMissions, missions, sessionToken, started, user]);
+
+  useEffect(() => {
+    if (!opened || !user) return;
+    const preloadTimer = window.setTimeout(() => { void loadMiniGames(); }, 650);
+    return () => window.clearTimeout(preloadTimer);
+  }, [opened, user]);
 
   useEffect(() => {
     if (view !== "bonus" || !user || !sessionToken) return;
@@ -866,7 +884,7 @@ export default function Home() {
       </div></div></section>}
 
     {opened && user && <section className={`passport-stage ${sessionOpening ? "session-opening" : ""} ${sessionClosing ? "session-closing" : ""}`}><nav className="page-tabs" aria-label="Secciones del pasaporte"><Tab label="Tablero" icon="home" active={view === "dashboard"} onClick={() => turnTo("dashboard")} /><Tab label="Cómo usarlo" icon="help" active={view === "guide"} onClick={() => turnTo("guide")} /><Tab label="Misiones" icon="compass" active={view === "missions"} onClick={() => turnTo("missions")} /><Tab label="Bonus" icon="gamepad" active={view === "bonus"} onClick={() => turnTo("bonus")} />{featureEnabled("badges") && <Tab label="Insignias" icon="badge" active={view === "badges"} onClick={() => turnTo("badges")} />}<Tab label="Historial" icon="history" active={view === "history"} onClick={() => turnTo("history")} />{user.role === "ADMIN" && <Tab label="Administrar" icon="settings" active={view === "admin"} onClick={() => turnTo("admin")} />}</nav>
-      <div className="passport-book"><span className="book-binding" aria-hidden="true" /><header className="passport-header"><div className="brand-lockup"><div className="brand-p">P</div><div><b>PASAPORTE SEGURO</b><small>FESTIVAL 2026</small></div></div><img className="header-program-logo" src="./assets/de-mi-para-mi.webp" alt="De mí para mí" /><div className="header-actions"><button className="cover-return" onClick={() => setOpened(false)} aria-label="Regresar a la portada"><UiIcon name="cover" /><span>Portada</span></button><div className="profile-chip"><AvatarPortrait value={user.avatar} size="tiny" /><div><b>{user.name}</b><small>{user.uad}</small></div><button onClick={logout} aria-label="Cerrar sesión" title="Cerrar sesión"><UiIcon name="logout" /></button></div></div></header>
+      <div className="passport-book"><span className="book-binding" aria-hidden="true" /><header className="passport-header"><div className="brand-lockup"><div className="brand-p">P</div><div><b>PASAPORTE SEGURO</b><small>FESTIVAL 2026</small></div></div><div className="header-campaign-lockup"><img className="header-program-logo" src="./assets/de-mi-para-mi.webp" alt="De mí para mí" width="132" height="52" decoding="async" /><span aria-hidden="true" /><img className="header-campaign-art" src="./assets/autocuidado-1mas1.webp" alt="1 más 1 es igual a 3: el cuidado nos multiplica" width="817" height="900" decoding="async" /></div><div className="header-actions"><button className="cover-return" onClick={() => setOpened(false)} aria-label="Regresar a la portada"><UiIcon name="cover" /><span>Portada</span></button><div className="profile-chip"><AvatarPortrait value={user.avatar} size="tiny" /><div><b>{user.name}</b><small>{user.uad}</small></div><button onClick={logout} aria-label="Cerrar sesión" title="Cerrar sesión"><UiIcon name="logout" /></button></div></div></header>
         <div className={`page-sheet turn-${pageDirection}`} key={`${view}-${pageKey}`}>
         {view === "dashboard" && <div className="page-content dashboard-page"><div className="welcome-copy"><p className="step-label">TABLERO DE VIAJE</p><h2>¡Hola, {user.name.split(" ")[0]}! <span>👋</span></h2><p>Tu pasaporte ya está en marcha. Cada estación suma una experiencia, un sello y nuevos puntos.</p></div><button className="avatar-card" onClick={() => openAvatarStudio("profile")}><span className="avatar-large"><AvatarPortrait value={user.avatar} size="small" /></span><span><b>Tu foto de pasaporte</b><small>Personalizar avatar</small></span><i>✎</i></button>
           <div className="progress-card"><div className="progress-ring" style={{ "--progress": `${progress * 3.6}deg` } as React.CSSProperties}><span><b>{progress}%</b><small>completado</small></span></div><div><p className="step-label">AVANCE TOTAL</p><h3>{completedVisible.length} de {visibleMissions.length} misiones selladas</h3><p>{progress < 100 ? `Te faltan ${visibleMissions.length - completedVisible.length} sellos para completar el pasaporte.` : "¡Tu pasaporte está completo!"}</p></div><button className="secondary-button" onClick={() => turnTo(progress === 100 ? "complete" : "missions")}>{progress === 100 ? "Ver logro" : "Continuar misiones"}</button></div>
