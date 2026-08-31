@@ -1,5 +1,35 @@
 # Actualización segura a Pasaporte Seguro 3.2
 
+## Revisión 3.2.22 — Listas administrativas y asignación de misiones
+
+- Misiones, insignias, usuarios, récords y progreso del resumen muestran **10 elementos por página**. Los controles aparecen a partir del elemento 11, permiten anterior/siguiente y seleccionar página. Cada lista conserva su página al cambiar de pestaña administrativa.
+- Las búsquedas filtran la lista completa antes de paginar y vuelven a la primera página. Al borrar el último elemento de una página, la vista se ajusta a una página válida. El CSV y las estadísticas siguen usando todos los colaboradores.
+- Se unifica la comparación de UAD en servidor, menús, mapa, validación del sello y resumen: espacios repetidos, mayúsculas y tildes ya no ocultan asignaciones. Una audiencia vacía o una UAD distinta **no** concede acceso. No se eliminan prefijos como «UAD».
+- Administración consulta las UAD reales del catálogo y de usuarios activos. La creación y edición de misiones validan la audiencia en el servidor y guardan su nombre canónico. Se preserva el valor de los selectores al editar registros antiguos; no se convierte silenciosamente en «Todas las UAD».
+- Cada misión muestra cuántos colaboradores activos no administradores la recibirán; se advierte cuando son cero. Una UAD válida sin colaboradores permite preparar misiones para registros futuros.
+- Las sesiones abiertas consultan solo las asignaciones al entrar en las páginas del recorrido, al recuperar foco y cada minuto. Las lecturas se deduplican y limitan a una cada 30 segundos, salvo el botón **Actualizar misiones**. No hay sondeo durante Bonus, Administración ni con la pestaña oculta. No se reemplazan puntuaciones ni progreso con respuestas de esta consulta.
+- El botón general «Misiones» elimina filtros de estación anteriores. Si una estación no tiene resultados, se ofrece volver a todas las misiones. Ante un error de sincronización se conserva la lista anterior y se muestra el error en Misiones.
+- **Actualizar datos** en Administración invalida la caché de misiones y catálogos para recuperar también cambios directos en la hoja. Una lista vacía del servidor ahora reemplaza correctamente la lista anterior.
+
+### Publicar esta revisión
+
+1. Conserva la URL actual de `public/config.js` y publica el código web actualizado.
+2. Copia `apps-script/Code.gs` en el proyecto de Apps Script vinculado a tu hoja.
+3. En **Implementar → Administrar implementaciones → Editar**, selecciona **Nueva versión** y actualiza la implementación existente, conservando la misma URL `/exec`. Guardar el archivo sin actualizar la implementación no activa los cambios.
+4. Esta revisión no cambia las columnas ni borra datos. Si ya usabas 3.2.21, no requiere volver a ejecutar `setupPasaporteSeguro()`.
+5. Recarga el sitio y pulsa **Administrar → Actualizar datos**.
+
+### Comprobación después de publicar
+
+- Con 11 o más elementos, revisa las páginas de las cuatro listas y busca un registro que esté en la última página. Verifica que el CSV siga incluyendo todos los usuarios.
+- Crea una misión para una UAD real. Con una cuenta de esa UAD ya abierta, pulsa **Misiones → Actualizar misiones**: debe aparecer. Con una cuenta de otra UAD no debe mostrarse ni permitir iniciar o sellar esa misión.
+- Cambia la audiencia a otra UAD, repite la actualización en ambas cuentas y verifica también el mapa del tablero. Si corriges la UAD del usuario, la edición mantiene la política de seguridad existente: cierra sus sesiones y deberá ingresar de nuevo.
+- Revisa las advertencias de «0 colaboradores»; si una UAD antigua está mal escrita, selecciónala nuevamente desde las opciones válidas y guarda la misión.
+
+### Pruebas incluidas
+
+`npm test` ejecuta 9 pruebas automáticas: límites de paginación, renderizado de listas, búsqueda global, ajuste tras eliminación, normalización y permisos de UAD, crear/reasignar/retirar con caché, lectura de cambios directos y limpieza/pausa de sincronización. Se usan datos simulados; no se modifican datos de producción. Compilación y sintaxis de Apps Script verificadas. La revisión visual en navegador y la integración contra la implementación real quedan pendientes de comprobar tras publicar.
+
 > Revisión 3.2.21: la imagen 1+1=3 se integra de forma permanente en el encabezado de todas las páginas internas, dentro de un espacio propio que no cubre contenidos y se simplifica en móvil. Se precarga una sola vez y se reutiliza desde la caché del navegador. Se optimizan las lecturas repetidas, el guardado local de sesión, la precarga del módulo Bonus, las consultas por filas en Apps Script y el ranking. Los juegos pausan trabajo cuando la pestaña no está visible, liberan temporizadores al cerrarse y reutilizan fondos de canvas ya dibujados; el tiro al blanco reduce renderizados innecesarios.
 
 > Revisión 3.2.17: se retira el contenedor flexible interno introducido en 3.2.16, porque podía crecer fuera del viewport y dejar el juego sin desplazamiento. Ahora todo el fondo del minijuego es la superficie desplazable, el modal comienza en la parte superior, conserva el encabezado visible y permite llegar sin bloqueo hasta los botones finales.

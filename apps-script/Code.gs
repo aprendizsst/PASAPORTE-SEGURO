@@ -51,7 +51,7 @@ const CACHE_TTL = {
 const WRITE_ACTIONS = ["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "verifyPasswordResetCode", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode", "adminManageBonusRecord"];
 
 function doGet() {
-  return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.2.21" } });
+  return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.2.22" } });
 }
 
 function doPost(event) {
@@ -71,6 +71,7 @@ function doPost(event) {
     else if (action === "register") data = registerApi_(request);
     else if (action === "login") data = loginApi_(request);
     else if (action === "session") data = sessionApi_(request);
+    else if (action === "getMissions") data = missionsApi_(request);
     else if (action === "startMission") data = startMissionApi_(request);
     else if (action === "completeMission") data = completeMissionApi_(request);
     else if (action === "updateAvatar") data = updateAvatarApi_(request);
@@ -272,6 +273,12 @@ function sessionApi_(request) {
   return bundle;
 }
 
+function missionsApi_(request) {
+  const user = requireSession_(request.token);
+  const admin = String(user.Rol) === "ADMIN";
+  return { missions: (admin ? activeMissions_() : allowedMissions_(user)).map(admin ? adminMission_ : publicMission_), uad: String(user.UAD || "") };
+}
+
 function requestPasswordResetApi_(request) {
   const cedula = cleanId_(request.cedula);
   const email = normalize_(request.email);
@@ -465,7 +472,7 @@ function adminCreateMissionApi_(request) {
     });
   } finally { lock.releaseLock(); }
   invalidateMissionCaches_();
-  return { id: id, sealCode: sealCode };
+  return { id: id, sealCode: sealCode, audience: mission.audience };
 }
 
 function adminEditMissionApi_(request) {
@@ -635,7 +642,12 @@ function adminManageBonusRecordApi_(request) {
 
 function adminDashboardApi_(request) {
   requireAdmin_(request.token);
-  return { people: buildAdminPeople_(), missions: activeMissions_().map(adminMission_), evidence: buildAdminEvidence_(), records: buildAdminBonusRecords_(), badges: activeBadges_() };
+  // Manual refresh also picks up edits made directly in the spreadsheet.
+  if (truthy_(request.force)) {
+    invalidateMissionCaches_();
+    CacheService.getScriptCache().remove(CACHE_KEYS.CATALOGS);
+  }
+  return { people: buildAdminPeople_(), missions: activeMissions_().map(adminMission_), evidence: buildAdminEvidence_(), records: buildAdminBonusRecords_(), badges: activeBadges_(), uads: assignmentUads_() };
 }
 
 function buildAdminBonusRecords_() {
@@ -703,7 +715,7 @@ function buildAdminPeople_() {
     bonusByUser[userId] = (bonusByUser[userId] || 0) + (Number(row.Puntaje) || 0);
   });
   const people = users.map(function (user) {
-    const available = missions.filter(function (m) { return m.Audiencia === "Todas las UAD" || String(m.Audiencia) === String(user.UAD); });
+    const available = missions.filter(function (m) { return missionAssignedTo_(m.Audiencia, user.UAD); });
     const completedRows = progressByUser[String(user.Id)] || [];
     const availableIds = available.map(function (mission) { return String(mission.Id); });
     const activeCompletedRows = completedRows.filter(function (row) { return availableIds.indexOf(String(row.MisionId)) >= 0; });
@@ -737,7 +749,7 @@ function validateMissionInput_(mission) {
   const title = limitedText_(mission.title, 120, "El nombre de la misión es obligatorio.");
   const station = limitedText_(mission.station, 80, "La estación es obligatoria.");
   const description = limitedText_(mission.description, 700, "La descripción es obligatoria.");
-  const audience = limitedText_(mission.audience || "Todas las UAD", 120, "La audiencia es obligatoria.");
+  const audience = validateMissionAudience_(mission.audience);
   const duration = limitedText_(mission.duration || "8 min", 30, "La duración es obligatoria.");
   const stationOptions = {
     "Estación Diversidad": ["◉", "#9d5cff"], "Estación Felicidad": ["♡", "#ffb703"],
@@ -835,9 +847,38 @@ function safeEvidenceName_(value) {
   return safe || "evidencia";
 }
 
+function audienceKey_(value) {
+  return String(value === null || value === undefined ? "" : value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function missionAssignedTo_(audience, uad) {
+  const key = audienceKey_(audience);
+  return key === "todas las uad" || (key !== "" && key === audienceKey_(uad));
+}
+
+function assignmentUads_() {
+  const seen = {};
+  const values = catalogsApi_().uads.concat(sheetObjects_(SHEETS.USERS).filter(function (user) { return truthy_(user.Activo); }).map(function (user) { return user.UAD; }));
+  return values.map(function (value) { return String(value || "").trim().replace(/\s+/g, " "); }).filter(function (value) {
+    const key = audienceKey_(value);
+    if (!key || key === "todas las uad" || seen[key]) return false;
+    seen[key] = true;
+    return true;
+  });
+}
+
+function validateMissionAudience_(value) {
+  const audience = limitedText_(value, 120, "Selecciona una UAD o Todas las UAD.");
+  const key = audienceKey_(audience);
+  if (key === "todas las uad") return "Todas las UAD";
+  const canonical = assignmentUads_().find(function (uad) { return audienceKey_(uad) === key; });
+  if (!canonical) throw new Error("La UAD asignada no existe en el catálogo ni entre los usuarios activos. Actualiza el panel y selecciona una UAD válida.");
+  return canonical;
+}
+
 function allowedMissions_(user) {
   return activeMissions_().filter(function (mission) {
-    return mission.Audiencia === "Todas las UAD" || String(mission.Audiencia) === String(user.UAD);
+    return missionAssignedTo_(mission.Audiencia, user.UAD);
   });
 }
 
