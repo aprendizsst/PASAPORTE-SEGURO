@@ -97,8 +97,6 @@ declare global {
   interface Window { PASSPORT_CONFIG?: { apiUrl?: string; features?: Record<string, boolean> } }
 }
 
-const API_OVERRIDE_KEY = "pasaporte_apps_script_url";
-
 function normalizeAppsScriptUrl(value: string) {
   const cleaned = String(value || "").trim().replace(/^['\"]|['\"]$/g, "");
   if (!cleaned) return "";
@@ -112,9 +110,9 @@ function normalizeAppsScriptUrl(value: string) {
 
 function getApiUrl() {
   if (typeof window === "undefined") return "";
-  let saved = "";
-  try { saved = localStorage.getItem(API_OVERRIDE_KEY) || ""; } catch { /* El archivo config.js sigue disponible como respaldo. */ }
-  return normalizeAppsScriptUrl(saved || window.PASSPORT_CONFIG?.apiUrl || "");
+  // La conexión es una configuración administrativa de despliegue. Nunca se
+  // acepta una URL guardada o modificada desde la interfaz del participante.
+  return normalizeAppsScriptUrl(window.PASSPORT_CONFIG?.apiUrl || "");
 }
 
 function featureEnabled(name: string) {
@@ -153,25 +151,6 @@ function apiUrlOrThrow() {
   if (!url) throw new Error("El Pasaporte Seguro no tiene configurada la conexión con Apps Script.");
   if (/TU[_ -]?IMPLEMENTACION|TU[_ -]?ID/i.test(url) || !/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/i.test(url)) throw new Error("La conexión debe usar la URL pública completa de Apps Script terminada en /exec.");
   return url;
-}
-
-async function probeApiConnection(candidate: string) {
-  const normalized = normalizeAppsScriptUrl(candidate);
-  if (!/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/i.test(normalized)) throw new Error("Pega la URL pública completa que termina en /exec.");
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 16000);
-  try {
-    const response = await fetch(`${normalized}?health=${Date.now()}`, { method: "GET", cache: "no-store", redirect: "follow", signal: controller.signal });
-    if (!response.ok) throw new Error(`Apps Script respondió con estado ${response.status}.`);
-    const result = JSON.parse(await response.text()) as { ok?: boolean; data?: { status?: string } };
-    if (!result.ok || result.data?.status !== "ready") throw new Error("La URL respondió, pero no corresponde a esta API del Pasaporte Seguro.");
-    return normalized;
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw new Error("Apps Script tardó demasiado en responder.");
-    if (error instanceof SyntaxError) throw new Error("La URL abrió una página de Google en lugar de la API. Publica la implementación para cualquier persona.");
-    if (error instanceof TypeError) throw new Error("El navegador no pudo acceder a la implementación. Revisa que sea pública y esté desplegada como aplicación web.");
-    throw error;
-  } finally { window.clearTimeout(timeout); }
 }
 
 async function callApi(action: string, payload: Record<string, unknown> = {}) {
@@ -373,10 +352,6 @@ export default function Home() {
   const [bonusLeaderboard, setBonusLeaderboard] = useState<BonusLeaderboardEntry[]>([]);
   const [bonusLeaderboardLoading, setBonusLeaderboardLoading] = useState(false);
   const [adminDashboardLoaded, setAdminDashboardLoaded] = useState(false);
-  const [connectionOpen, setConnectionOpen] = useState(false);
-  const [connectionUrl, setConnectionUrl] = useState(() => getApiUrl());
-  const [connectionStatus, setConnectionStatus] = useState<"idle" | "testing" | "ready" | "error">("idle");
-  const [connectionMessage, setConnectionMessage] = useState("");
   const catalogsRequested = useRef(false);
   const bonusLeaderboardLoaded = useRef(false);
   const visibleMissions = useMemo(() => user ? missions.filter((m) => missionAssignedTo(m.audience, user.uad)) : [], [missions, user]);
@@ -536,18 +511,8 @@ export default function Home() {
       revealPassport("dashboard");
     } catch (error) {
       const message = error instanceof Error ? error.message : "No fue posible iniciar sesión.";
-      if (/Apps Script|conexión|implementación|servicio/i.test(message)) { setConnectionUrl(getApiUrl()); setConnectionOpen(true); setConnectionStatus("error"); setConnectionMessage(message); }
       notify(message);
     }
-    finally { setBusyAction(""); }
-  }
-  async function saveApiConnection() {
-    setConnectionStatus("testing"); setConnectionMessage("Comprobando la implementación pública…"); setBusyAction("test-connection");
-    try {
-      const verified = await probeApiConnection(connectionUrl);
-      localStorage.setItem(API_OVERRIDE_KEY, verified);
-      setConnectionUrl(verified); setConnectionStatus("ready"); setConnectionMessage("Conexión verificada. Ya puedes iniciar sesión."); catalogsRequested.current = false;
-    } catch (error) { setConnectionStatus("error"); setConnectionMessage(error instanceof Error ? error.message : "No fue posible verificar la conexión."); }
     finally { setBusyAction(""); }
   }
   async function requestPasswordReset(event: FormEvent<HTMLFormElement>) {
@@ -902,7 +867,7 @@ export default function Home() {
 
     {opened && !user && <section className="auth-stage" id="passport-access"><div className="auth-book"><aside className="auth-visual"><p className="mini-kicker">FESTIVAL 2026</p><div className="passport-mark">P</div><h2>Tu ruta segura comienza aquí.</h2><p>Regístrate, visita las estaciones y colecciona cada sello del festival.</p><div className="mini-route">{stations.map((s) => <span key={s.name} style={{ background: s.color }}><StationIcon station={s.name} /></span>)}</div></aside>
       <div className="auth-form-side"><div className="auth-switch" role="tablist"><button className={authMode === "login" ? "active" : ""} onClick={() => setAuthMode("login")}>Iniciar sesión</button><button className={authMode === "register" ? "active" : ""} onClick={() => setAuthMode("register")}>Crear pasaporte</button></div>
-        {authMode === "login" ? <form className="passport-form" onSubmit={login}><p className="step-label">BIENVENIDO DE NUEVO</p><h2>Continúa tu recorrido</h2><label>Número de cédula<input name="cedula" inputMode="numeric" maxLength={25} autoComplete="username" placeholder="Ej. 1010101010" required /></label><label>Contraseña<input name="password" type="password" maxLength={128} autoComplete="current-password" placeholder="Tu contraseña" required /></label><button className="primary-button" type="submit" disabled={busyAction === "login"}>{busyAction === "login" ? <><LoadingDot /> Verificando...</> : <>Ingresar al pasaporte <UiIcon name="arrow" /></>}</button><button className="forgot-password" type="button" onClick={() => { setAuthMode("recover"); setRecoveryStage("request"); setRecoveryTicket(""); }}>¿Olvidaste tu contraseña?</button><button className="connection-toggle" type="button" onClick={() => { setConnectionUrl(getApiUrl()); setConnectionOpen((current) => !current); }}>Revisar conexión con Apps Script</button>{connectionOpen && <div className={`connection-panel ${connectionStatus}`}><span><UiIcon name="settings" /></span><div><b>Conexión del pasaporte</b><small>Pega la URL de la aplicación web terminada en /exec.</small></div><input type="url" value={connectionUrl} onChange={(event) => { setConnectionUrl(event.target.value); setConnectionStatus("idle"); setConnectionMessage(""); }} placeholder="https://script.google.com/macros/s/.../exec" aria-label="URL pública de Apps Script" /><button type="button" onClick={() => void saveApiConnection()} disabled={busyAction === "test-connection"}>{busyAction === "test-connection" ? "Verificando…" : "Validar y guardar"}</button>{connectionMessage && <p>{connectionMessage}</p>}</div>}{!getApiUrl() && <p className="demo-note">Demostración administrador: <b>1000000000</b> / <b>Demo1234*</b></p>}</form>
+        {authMode === "login" ? <form className="passport-form" onSubmit={login}><p className="step-label">BIENVENIDO DE NUEVO</p><h2>Continúa tu recorrido</h2><label>Número de cédula<input name="cedula" inputMode="numeric" maxLength={25} autoComplete="username" placeholder="Ej. 1010101010" required /></label><label>Contraseña<input name="password" type="password" maxLength={128} autoComplete="current-password" placeholder="Tu contraseña" required /></label><button className="primary-button" type="submit" disabled={busyAction === "login"}>{busyAction === "login" ? <><LoadingDot /> Verificando...</> : <>Ingresar al pasaporte <UiIcon name="arrow" /></>}</button><button className="forgot-password" type="button" onClick={() => { setAuthMode("recover"); setRecoveryStage("request"); setRecoveryTicket(""); }}>¿Olvidaste tu contraseña?</button>{!getApiUrl() && <p className="demo-note">Demostración administrador: <b>1000000000</b> / <b>Demo1234*</b></p>}</form>
         : authMode === "register" ? <form className="passport-form register-grid" onSubmit={register}><div className="form-heading"><p className="step-label">NUEVO VIAJERO</p><h2>Crea tu pasaporte</h2></div><button className="register-avatar-card wide" type="button" onClick={() => openAvatarStudio("register")}><AvatarPortrait value={encodeAvatar(avatarDraft)} size="small" /><span><b>Crea tu foto de pasaporte</b><small>Elige rostro, cabello, ropa y accesorios antes de registrarte.</small></span><i>Personalizar →</i></button><label className="wide">Nombre completo<input name="name" maxLength={120} autoComplete="name" placeholder="Nombres y apellidos" required /></label><label>Número de cédula<input name="cedula" inputMode="numeric" maxLength={25} autoComplete="username" placeholder="Sin puntos" required /></label><label>Número de teléfono<input name="phone" type="tel" maxLength={30} autoComplete="tel" placeholder="300 000 0000" required /></label><label className="wide">Correo electrónico<input name="email" type="email" maxLength={160} autoComplete="email" placeholder="nombre@empresa.com" required /></label><label>Cargo<select name="cargo">{catalogs.cargos.map((x) => <option key={x}>{x}</option>)}</select></label><label>UAD<select name="uad">{catalogs.uads.map((x) => <option key={x}>{x}</option>)}</select></label><label className="wide">Contraseña<input name="password" type="password" minLength={8} maxLength={128} autoComplete="new-password" placeholder="Mínimo 8 caracteres" required /></label><button className="primary-button wide" type="submit" disabled={busyAction === "register"}>{busyAction === "register" ? <><LoadingDot /> Creando...</> : <>Crear mi pasaporte <UiIcon name="arrow" /></>}</button></form>
         : recoveryStage === "request" ? <form className="passport-form recovery-form" onSubmit={requestPasswordReset}><RecoveryProgress step={1} /><p className="step-label">RECUPERAR ACCESO</p><h2>Solicita tu código</h2><p>Escribe la cédula y el correo usados al crear tu pasaporte. Te enviaremos un código válido por 15 minutos.</p><label>Número de cédula<input name="cedula" inputMode="numeric" maxLength={25} required /></label><label>Correo registrado<input name="email" type="email" maxLength={160} autoComplete="email" required /></label><button className="primary-button" type="submit" disabled={busyAction === "request-reset"}>{busyAction === "request-reset" ? <><LoadingDot /> Enviando...</> : <>Enviar código <UiIcon name="key" /></>}</button><button className="forgot-password" type="button" onClick={() => { setRecoveryTicket(""); setRecoveryStage("verify"); }}>Ya tengo un código de respaldo</button><button className="auth-back" type="button" onClick={() => setAuthMode("login")}>← Volver al inicio de sesión</button></form>
         : recoveryStage === "verify" || !recoveryTicket ? <form className="passport-form recovery-form" onSubmit={verifyPasswordResetCode}><RecoveryProgress step={2} /><p className="step-label">VALIDAR IDENTIDAD</p><h2>Ingresa el código</h2><p>Revisa tu correo e introduce el código recibido. No podrás crear una contraseña nueva hasta validarlo.</p><label>Número de cédula<input name="cedula" inputMode="numeric" maxLength={25} defaultValue={recoveryCedula} required /></label><label>Código de recuperación<input name="code" minLength={6} maxLength={12} autoComplete="one-time-code" autoCapitalize="characters" placeholder="Ej. A7K9P2" pattern="[A-Za-z0-9]{6,12}" onInput={(event) => { event.currentTarget.value = event.currentTarget.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12); }} required /></label><button className="primary-button" type="submit" disabled={busyAction === "verify-reset-code"}>{busyAction === "verify-reset-code" ? <><LoadingDot /> Validando...</> : <>Validar código <UiIcon name="check" /></>}</button><button className="auth-back" type="button" onClick={() => { setRecoveryTicket(""); setRecoveryStage("request"); }}>← Solicitar otro código</button></form>

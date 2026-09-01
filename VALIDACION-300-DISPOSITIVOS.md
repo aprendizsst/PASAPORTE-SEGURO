@@ -4,7 +4,7 @@ Esta guía separa la comprobación funcional del ensayo de capacidad. Las prueba
 
 ## Antes del evento
 
-1. Publique la revisión 3.2.23 del frontend y una **nueva versión** de la implementación de Apps Script.
+1. Publique la revisión 3.2.24 del frontend y una **nueva versión** de la implementación de Apps Script.
 2. Ejecute una vez `setupPasaporteSeguro()` y confirme que finaliza sin error.
 3. Verifique que los 300 usuarios estén creados antes del ingreso masivo. Evite registrar 300 cuentas durante el evento.
 4. Entre 1 y 5 minutos antes de abrir el acceso, ejecute `prepararEvento300Usuarios()`. Continúe únicamente si responde **Preparación completa**.
@@ -41,4 +41,4 @@ npm test
 npm run build
 ```
 
-El resultado esperado es 13 pruebas aprobadas y una compilación de producción sin errores.
+El resultado esperado es 14 pruebas aprobadas y una compilación de producción sin errores.

@@ -1,7 +1,7 @@
 {
   "name": "pasaporte-seguro-2026",
   "private": true,
-  "version": "3.2.23",
+  "version": "3.2.24",
   "type": "module",
   "scripts": {
     "dev": "vite",

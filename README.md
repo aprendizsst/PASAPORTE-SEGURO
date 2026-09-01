@@ -68,7 +68,7 @@ Si el administrador pierde el acceso y tampoco puede recibir el código por corr
 5. Abra `public/config.js` y pegue la URL entre las comillas de `apiUrl`.
 6. Cada vez que modifique `Code.gs`, cree una **nueva versión** de la implementación de Apps Script para que el sitio público use los cambios.
 
-El inicio de sesión incluye **Revisar conexión con Apps Script**. Esta opción prueba la URL pública, confirma que responde la API correcta y permite guardar una URL `/exec` válida en el navegador si `config.js` quedó vacío, antiguo o almacenado en caché.
+La conexión se administra únicamente desde `public/config.js`. El inicio de sesión no muestra ni acepta campos para reemplazar la URL y cualquier configuración antigua guardada en el navegador se ignora.
 
 > El backend valida la sesión y el rol en cada operación administrativa. Las contraseñas no se guardan en texto visible.
 

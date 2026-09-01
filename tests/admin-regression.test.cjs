@@ -391,3 +391,12 @@ test('preparación del evento sirve progreso y Bonus sin búsquedas por particip
   assert.equal(ctx.bonusForUser_('a')[0].JuegoId, 'sudoku');
   assert.deepEqual(clean(ctx.progressForUser_('usuario-sin-datos')), []);
 });
+
+test('la conexión de Apps Script solo puede provenir de la configuración publicada', () => {
+  const source = fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8');
+  assert.doesNotMatch(source, /Revisar conexión con Apps Script|Validar y guardar|pasaporte_apps_script_url/);
+  assert.doesNotMatch(source, /probeApiConnection|saveApiConnection|connectionOpen|connectionUrl/);
+  const getApiUrlBody = source.slice(source.indexOf('function getApiUrl'), source.indexOf('function featureEnabled'));
+  assert.match(getApiUrlBody, /window\.PASSPORT_CONFIG\?\.apiUrl/);
+  assert.doesNotMatch(getApiUrlBody, /localStorage/);
+});

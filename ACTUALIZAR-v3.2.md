@@ -1,5 +1,13 @@
 # Actualización segura a Pasaporte Seguro 3.2
 
+## Revisión 3.2.24 — Conexión controlada por el administrador
+
+- Se eliminan el botón **Revisar conexión con Apps Script**, el campo de URL y la acción **Validar y guardar** del inicio de sesión.
+- La aplicación ignora cualquier URL de Apps Script que hubiera quedado guardada anteriormente en el navegador. La única conexión válida se lee desde `public/config.js`.
+- La configuración publicada queda congelada durante la ejecución para evitar modificaciones accidentales desde componentes de la interfaz. Un usuario solo podría alterar temporalmente su propia copia mediante herramientas del navegador; nunca cambia la configuración publicada ni los datos de otros usuarios.
+- Esta revisión no cambia columnas ni datos. Si ya ejecutó `setupPasaporteSeguro()` con la versión 3.2.23, no necesita volver a ejecutarlo; publique el frontend actualizado. Puede actualizar también `Code.gs` para que el diagnóstico muestre 3.2.24.
+- `npm test` ejecuta ahora 14 pruebas, incluida una regresión que impide volver a introducir el selector de conexión o una URL tomada de `localStorage`.
+
 ## Revisión 3.2.23 — Estabilidad para picos de 300 dispositivos
 
 - El inicio de sesión ya no crea una fila en `Sesiones`: usa tokens firmados con vencimiento de 12 horas. Esto elimina una escritura y el bloqueo asociado por cada ingreso. Cambiar contraseña, editar o desactivar un usuario incrementa `SessionVersion` y revoca de inmediato sus tokens.
@@ -93,7 +101,7 @@ Esta versión conserva usuarios, misiones, sellos, evidencias, insignias y resul
 5. Cree una **nueva versión** de la implementación web de Apps Script. Mantenga el acceso para cualquier persona y use la URL terminada en `/exec`.
 6. Publique el sitio web y pruebe en una ventana privada.
 
-Si el sitio indica que no encuentra Apps Script aunque la implementación esté publicada, pulse **Revisar conexión con Apps Script** debajo del inicio de sesión, pegue la URL `/exec` y seleccione **Validar y guardar**. La URL verificada queda guardada en ese navegador y tiene prioridad sobre una copia antigua de `config.js`.
+Si el sitio indica que no encuentra Apps Script, el administrador debe corregir `apiUrl` en `public/config.js` y volver a publicar. Por seguridad, los participantes no pueden reemplazar esa dirección desde el inicio de sesión.
 
 La migración agrega solamente las hojas o columnas faltantes. No borra filas existentes.
 
