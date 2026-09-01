@@ -2,7 +2,7 @@
 // Mientras esté vacío, la aplicación funciona en modo demostración. Esta URL es
 // administrativa: los participantes no pueden cambiarla desde la aplicación.
 window.PASSPORT_CONFIG = Object.freeze({
-  apiUrl: "",
+  apiUrl: "https://script.google.com/macros/s/AKfycbzc4_V7WdPV9Fj83eDelbRuFfn_V28CzHuCIcT9ugiopAzL8PjoLlhegr3Q5-tNc5pc/exec",
   // Puede desactivar una mejora visual sin borrar código ni modificar Google Sheets.
   features: Object.freeze({
     dynamicCover: true,
