@@ -1,5 +1,26 @@
 # Actualización segura a Pasaporte Seguro 3.2
 
+## Revisión 3.2.23 — Estabilidad para picos de 300 dispositivos
+
+- El inicio de sesión ya no crea una fila en `Sesiones`: usa tokens firmados con vencimiento de 12 horas. Esto elimina una escritura y el bloqueo asociado por cada ingreso. Cambiar contraseña, editar o desactivar un usuario incrementa `SessionVersion` y revoca de inmediato sus tokens.
+- `prepararEvento300Usuarios()` carga usuarios, misiones, insignias, catálogos, progreso y Bonus antes del evento. Progreso y Bonus se leen una sola vez en lote y se sirven durante diez minutos desde snapshots; si la caché no admite el tamaño, la función lo informa en vez de declarar una preparación falsa.
+- La aplicación no repite `getMissions` después del bundle de ingreso. Las sincronizaciones de fondo se distribuyen entre 2 y 3,5 minutos por dispositivo, se pausan fuera del recorrido y conservan actualización manual, foco y reconexión.
+- Login y recuperación de sesión usan reintentos con espera exponencial y dispersión aleatoria. Las escrituras conservan el mismo `requestId`, por lo que una respuesta perdida no repite la operación mientras su resultado está registrado.
+- Guardar progreso, evidencias y récords protege las filas nuevas con bloqueo corto. Las misiones son monotónicas: una solicitud atrasada de «iniciar» nunca devuelve una misión completada a estado iniciado.
+- El frontend distingue errores transitorios de cuota, red o servidor de errores definitivos de credenciales y validación. Solo los primeros se reintentan.
+
+### Publicar y preparar esta revisión
+
+1. Publique el frontend actualizado y reemplace Apps Script con `apps-script/Code.gs`.
+2. Ejecute **una vez** `setupPasaporteSeguro()`. Agrega únicamente `SessionVersion` a `Usuarios` y crea el secreto de firma; no borra datos. Las sesiones antiguas siguen siendo aceptadas temporalmente.
+3. Cree una nueva versión de la implementación de Apps Script conservando la URL `/exec`.
+4. Entre 1 y 5 minutos antes del ingreso masivo, ejecute `prepararEvento300Usuarios()`. Debe responder «Preparación completa» con los conteos. Si indica caché incompleta, vuelva a ejecutarla y escalone el ingreso.
+5. Compruebe una cuenta normal, una cuenta administrativa, una misión con sello y un récord Bonus antes de abrir el acceso general.
+
+### Alcance de la validación
+
+`npm test` ejecuta 13 pruebas: las 9 regresiones administrativas anteriores más distribución de 300 sincronizaciones, sesión firmada y revocación, progreso monotónico/idempotencia y snapshots de actividad sin búsquedas individuales. También se verificó la compilación de producción. La prueba de 300 es un modelo local determinista; la capacidad real de la implementación de Google debe medirse después de publicar con el procedimiento de `VALIDACION-300-DISPOSITIVOS.md`.
+
 ## Revisión 3.2.22 — Listas administrativas y asignación de misiones
 
 - Misiones, insignias, usuarios, récords y progreso del resumen muestran **10 elementos por página**. Los controles aparecen a partir del elemento 11, permiten anterior/siguiente y seleccionar página. Cada lista conserva su página al cambiar de pestaña administrativa.

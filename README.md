@@ -20,7 +20,7 @@ Versión completa de la aplicación web para GitHub Pages y Google Apps Script. 
 - Reporte administrativo CSV y actualización manual de estadísticas.
 - Diseño adaptable para computadores, tabletas y teléfonos.
 - Carga diferida de minijuegos, caché por usuario, restauración de sesión, reintentos progresivos e identificadores de operación para reducir cargas y duplicados.
-- Inicio de sesión optimizado por búsqueda directa, reutilización segura de sesión y restauración instantánea desde el dispositivo.
+- Inicio de sesión con token firmado sin escritura por ingreso, caché preparada para eventos y restauración instantánea desde el dispositivo.
 - Interacciones optimistas para misiones, avatar y bonus: la pantalla responde primero y confirma el guardado en segundo plano.
 - Gestión administrativa de usuarios con búsqueda, edición, eliminación anonimizada, códigos de respaldo y conservación del historial.
 - Recuperación de contraseña por correo y código de respaldo de un solo uso generado por el administrador.
@@ -118,22 +118,24 @@ Cambie únicamente `true` por `false` si necesita desactivar temporalmente una c
 
 ## Optimización y concurrencia
 
-- El login consulta únicamente la columna y la fila del usuario solicitado; no vuelve a leer ni guardar en caché toda la hoja `Usuarios`.
+- `prepararEvento300Usuarios()` carga usuarios y snapshots fragmentados de progreso/Bonus mediante lecturas masivas antes de un pico de hasta 300 ingresos.
+- El login usa un token firmado y no agrega filas en `Sesiones`; editar, eliminar o restablecer la contraseña incrementa la versión de seguridad y revoca los tokens anteriores.
 - La estructura de las nueve hojas se valida durante `setupPasaporteSeguro`, no en cada clic del participante.
-- Las sesiones válidas se reutilizan y su caché se conserva durante la actividad para evitar recorrer `Sesiones` repetidamente.
+- Las sesiones nuevas se validan con firma y caché; `Sesiones` se consulta únicamente para compatibilidad temporal con tokens de versiones anteriores.
 - El último tablero válido se muestra inmediatamente desde el dispositivo y se confirma en segundo plano con Apps Script.
 - Los catálogos se solicitan solo cuando una persona abre el formulario de registro; no ralentizan el inicio de sesión.
 - El panel administrativo calcula estadísticas únicamente al abrirlo o actualizarlo manualmente; no bloquea el ingreso del administrador.
 - Catálogos y misiones se comparten mediante caché.
-- El progreso y los bonus se buscan por usuario y solo se almacena en caché la actividad solicitada.
+- Después del pico inicial, el progreso y los Bonus se consultan y almacenan en caché por usuario; durante la preparación usan snapshots divididos para respetar el límite de tamaño por entrada.
 - Las estadísticas administrativas se reutilizan durante 30 segundos y se actualizan solo cuando el administrador lo solicita.
 - Las evidencias no se descargan durante el login ni la navegación normal; el administrador consulta solo los 100 registros más recientes al abrir su panel.
 - Las fotos se comprimen en el dispositivo hasta 1600 px antes del envío. Fotos y videos tienen un límite de 7 MB por evidencia.
 - El código se valida antes de guardar el archivo y una misión completada no vuelve a duplicar evidencia durante un reintento.
-- Las escrituras repetidas llevan un identificador temporal para evitar duplicados durante reintentos.
+- Las escrituras repetidas llevan un identificador temporal, estado pendiente y resultado compartido para evitar duplicados durante reintentos concurrentes.
 - Las actualizaciones de filas se realizan en bloque.
 - Los minijuegos cargan su código únicamente al abrir la pestaña Bonus.
-- Los tiempos de espera y reintentos son diferentes para login, lecturas y escrituras, evitando esperas acumuladas excesivas.
+- Los tiempos de espera y reintentos son diferentes para login, lecturas y escrituras; usan retroceso exponencial con dispersión para no crear una segunda ráfaga.
+- La sincronización de asignaciones se reparte entre 2 y 3,5 minutos por equipo y no duplica la lectura incluida en el login.
 
 Estas medidas reducen notablemente las consultas, pero Google Apps Script y Google Sheets conservan cuotas propias. Antes del evento se recomienda hacer una prueba de carga progresiva en una copia de la hoja y del despliegue, nunca directamente sobre los datos reales.
 
@@ -142,7 +144,7 @@ Estas medidas reducen notablemente las consultas, pero Google Apps Script y Goog
 - `Usuarios`: perfiles, UAD, rol y credenciales cifradas.
 - `Misiones`: actividades, estación, puntos, audiencia, código único y requisito de evidencia.
 - `Progreso`: misiones iniciadas y completadas con fechas.
-- `Sesiones`: tokens temporales de acceso.
+- `Sesiones`: compatibilidad temporal con tokens emitidos por versiones anteriores; los tokens actuales son firmados y no crean filas.
 - `Catalogos`: listas editables de cargos y UAD.
 - `Bonus`: resultados y puntajes de los minijuegos.
 - `Evidencias`: metadatos y enlaces privados de fotos o videos; el archivo binario se conserva en Google Drive.

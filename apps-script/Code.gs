@@ -16,7 +16,7 @@ const SHEETS = {
 };
 
 const HEADERS = {
-  Usuarios: ["Id", "Nombre", "Cedula", "Telefono", "Correo", "Cargo", "UAD", "Avatar", "Rol", "PasswordSalt", "PasswordHash", "Activo", "CreadoEn"],
+  Usuarios: ["Id", "Nombre", "Cedula", "Telefono", "Correo", "Cargo", "UAD", "Avatar", "Rol", "PasswordSalt", "PasswordHash", "Activo", "CreadoEn", "SessionVersion"],
   Misiones: ["Id", "Estacion", "Icono", "Color", "Titulo", "Descripcion", "Puntos", "Audiencia", "Duracion", "Activa", "CreadaEn", "CreadaPor", "CodigoSello", "EvidenciaObligatoria", "EditadaEn"],
   Progreso: ["Id", "UsuarioId", "MisionId", "Estado", "IniciadaEn", "CompletadaEn"],
   Sesiones: ["Token", "UsuarioId", "ExpiraEn", "CreadaEn"],
@@ -37,8 +37,13 @@ const CACHE_KEYS = {
   ADMIN_BONUS_RECORDS: "pasaporte:admin-bonus-records:v1",
   BADGES: "pasaporte:badges:v1",
   BONUS_LEADERBOARD: "pasaporte:bonus-leaderboard:v1",
-  SCHEMA: "pasaporte:schema:v7",
+  SCHEMA: "pasaporte:schema:v8",
+  USERS_WARM: "pasaporte:users:warm:v2",
+  EVENT_WARM_UNTIL: "pasaporte:event:warm-until:v1",
+  PROGRESS_SNAPSHOT: "pasaporte:event:progress:v1:",
+  BONUS_SNAPSHOT: "pasaporte:event:bonus:v1:",
 };
+const ACTIVITY_SNAPSHOT_SHARDS = 16;
 
 const CACHE_TTL = {
   CATALOGS: 21600,
@@ -51,19 +56,22 @@ const CACHE_TTL = {
 const WRITE_ACTIONS = ["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "verifyPasswordResetCode", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode", "adminManageBonusRecord"];
 
 function doGet() {
-  return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.2.22" } });
+  return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.2.23" } });
 }
 
 function doPost(event) {
+  let idempotencyKey = "";
+  let requestClaimed = false;
   try {
     const request = JSON.parse((event && event.postData && event.postData.contents) || "{}");
     const action = String(request.action || "");
     ensureRuntimeReady_();
     const requestId = cleanRequestId_(request.requestId);
-    const idempotencyKey = requestId && WRITE_ACTIONS.indexOf(action) >= 0 ? "pasaporte:request:" + action + ":" + requestId : "";
+    idempotencyKey = requestId && WRITE_ACTIONS.indexOf(action) >= 0 ? "pasaporte:request:" + action + ":" + requestId : "";
     if (idempotencyKey) {
-      const previous = cacheGet_(idempotencyKey);
-      if (previous) return json_({ ok: true, data: previous, repeated: true });
+      const claim = claimRequest_(idempotencyKey);
+      if (claim.repeated) return json_({ ok: true, data: claim.data, repeated: true });
+      requestClaimed = true;
     }
     let data;
 
@@ -93,10 +101,11 @@ function doPost(event) {
     else if (action === "adminDashboard") data = adminDashboardApi_(request);
     else throw new Error("Acción no reconocida.");
 
-    if (idempotencyKey) cachePut_(idempotencyKey, data, 600);
+    if (idempotencyKey) completeRequest_(idempotencyKey, data);
     return json_({ ok: true, data: data });
   } catch (error) {
-    return json_({ ok: false, message: error.message || "Error inesperado." });
+    if (requestClaimed && idempotencyKey) releaseRequestClaim_(idempotencyKey);
+    return json_({ ok: false, message: error.message || "Error inesperado.", retryable: truthy_(error.retryable) });
   }
 }
 
@@ -111,14 +120,15 @@ function setupPasaporteSeguro() {
   invalidateMissionCaches_();
   CacheService.getScriptCache().remove(CACHE_KEYS.BADGES);
   CacheService.getScriptCache().put(CACHE_KEYS.SCHEMA, "ready", 21600);
-  PropertiesService.getScriptProperties().setProperty("PASAPORTE_SCHEMA_VERSION", "7");
+  ensureTokenSecret_();
+  PropertiesService.getScriptProperties().setProperty("PASAPORTE_SCHEMA_VERSION", "8");
   return "Estructura actualizada sin borrar datos. Misiones, insignias, evidencias, recuperación y récords Bonus están listos.";
 }
 
 function ensureRuntimeReady_() {
   const cache = CacheService.getScriptCache();
   if (cache.get(CACHE_KEYS.SCHEMA)) return;
-  if (PropertiesService.getScriptProperties().getProperty("PASAPORTE_SCHEMA_VERSION") === "7") {
+  if (PropertiesService.getScriptProperties().getProperty("PASAPORTE_SCHEMA_VERSION") === "8") {
     cache.put(CACHE_KEYS.SCHEMA, "ready", 21600);
     return;
   }
@@ -133,7 +143,8 @@ function ensureRuntimeReady_() {
       seedBadges_();
       migrateDefaultBadgeDesigns_();
       migrateExpandedBonusBadge_();
-      PropertiesService.getScriptProperties().setProperty("PASAPORTE_SCHEMA_VERSION", "7");
+      ensureTokenSecret_();
+      PropertiesService.getScriptProperties().setProperty("PASAPORTE_SCHEMA_VERSION", "8");
       cache.put(CACHE_KEYS.SCHEMA, "ready", 21600);
     }
   } finally { lock.releaseLock(); }
@@ -166,6 +177,7 @@ function crearAdministradorInicial() {
     PasswordHash: hashPassword_(password, salt),
     Activo: true,
     CreadoEn: new Date(),
+    SessionVersion: "1",
   });
   return "Administrador creado correctamente.";
 }
@@ -184,7 +196,7 @@ function restablecerAdministradorDesdePropiedades() {
   const user = findUserByCedula_(cedula);
   if (!user || String(user.Rol) !== "ADMIN" || !truthy_(user.Activo)) throw new Error("No existe un administrador activo con esa cédula.");
   const salt = Utilities.getUuid();
-  updateObjectRow_(SHEETS.USERS, user._row, { PasswordSalt: salt, PasswordHash: hashPassword_(password, salt) });
+  updateObjectRow_(SHEETS.USERS, user._row, { PasswordSalt: salt, PasswordHash: hashPassword_(password, salt), SessionVersion: nextSessionVersion_(user) });
   revokeUserSessions_(user.Id);
   invalidateUserCache_(user);
   clearLoginRate_(cedula);
@@ -220,7 +232,7 @@ function registerApi_(request) {
   if (password.length > 128) throw new Error("La contraseña supera el tamaño permitido.");
 
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(5000)) throw new Error("Hay varios registros en curso. Espera un momento e intenta nuevamente.");
+  if (!lock.tryLock(8000)) throw busyError_("Hay varios registros en curso. Espera un momento; volveremos a intentarlo.");
   try {
     if (findObjectByField_(SHEETS.USERS, "Cedula", cedula, cleanId_)) throw new Error("Ya existe un pasaporte registrado con esa cédula.");
     if (findObjectByField_(SHEETS.USERS, "Correo", email, normalize_)) throw new Error("Ya existe un pasaporte registrado con ese correo.");
@@ -230,7 +242,7 @@ function registerApi_(request) {
       Telefono: phone, Correo: email,
       Cargo: cargo, UAD: uad, Avatar: input.avatar || "avatar:v1:2:0:1:0:0",
       Rol: "USER", PasswordSalt: salt, PasswordHash: hashPassword_(password, salt),
-      Activo: true, CreadoEn: new Date(),
+      Activo: true, CreadoEn: new Date(), SessionVersion: "1",
     };
     newUser._row = appendObject_(SHEETS.USERS, newUser);
     cacheUser_(newUser);
@@ -248,18 +260,8 @@ function loginApi_(request) {
   if (hashPassword_(String(request.password || ""), String(user.PasswordSalt)) !== String(user.PasswordHash)) throw new Error("Cédula o contraseña incorrecta.");
   clearLoginRate_(cedula);
 
-  const reusable = cacheGet_(activeSessionCacheKey_(user.Id));
-  let token;
-  let expiresAt;
-  if (reusable && reusable.token && new Date(reusable.expiresAt).getTime() > Date.now()) {
-    token = String(reusable.token);
-    expiresAt = new Date(reusable.expiresAt);
-  } else {
-    token = Utilities.getUuid() + Utilities.getUuid().replace(/-/g, "");
-    expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000);
-    appendObject_(SHEETS.SESSIONS, { Token: token, UsuarioId: user.Id, ExpiraEn: expiresAt, CreadoEn: new Date() });
-    cachePut_(activeSessionCacheKey_(user.Id), { token: token, expiresAt: expiresAt.toISOString() }, CACHE_TTL.SESSION);
-  }
+  const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000);
+  const token = createSessionToken_(user, expiresAt);
   cachePut_(sessionCacheKey_(token), { user: user, expiresAt: expiresAt.toISOString() }, CACHE_TTL.SESSION);
   const bundle = userBundle_(user);
   bundle.token = token;
@@ -348,7 +350,7 @@ function resetPasswordApi_(request) {
     .find(function (row) { return hashPassword_(ticket, String(row.Id)) === String(row.TicketHash); });
   if (!matched) throw new Error("La validación del código no es válida o ya venció. Solicita un código nuevo.");
   const salt = Utilities.getUuid();
-  updateObjectRow_(SHEETS.USERS, user._row, { PasswordSalt: salt, PasswordHash: hashPassword_(password, salt) });
+  updateObjectRow_(SHEETS.USERS, user._row, { PasswordSalt: salt, PasswordHash: hashPassword_(password, salt), SessionVersion: nextSessionVersion_(user) });
   updateObjectRow_(SHEETS.RECOVERY, matched._row, { Usado: true, TicketHash: "", TicketExpiraEn: "" });
   revokeUserSessions_(user.Id);
   invalidateUserCache_(user);
@@ -403,21 +405,29 @@ function completeBonusApi_(request) {
   const score = Math.max(0, Math.min(scoreLimits[gameId], Number(request.score) || 0));
   const requestedRecord = request.record === undefined || request.record === null || request.record === "" ? score : Number(request.record);
   const record = Math.max(0, Math.min(recordLimits[gameId], Number(requestedRecord) || 0));
+  bonusForUser_(user.Id);
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(4000)) throw new Error("Estamos guardando otros resultados. Intenta nuevamente en un momento.");
+  if (!lock.tryLock(12000)) throw busyError_("Estamos guardando otros resultados. Reintentando…");
   let bestScore = score;
   let bestRecord = record;
   try {
-    CacheService.getScriptCache().remove(bonusCacheKey_(user.Id));
-    const current = findObjectsByField_(SHEETS.BONUS, "UsuarioId", user.Id, String).find(function (row) { return String(row.JuegoId) === gameId; });
+    const latestRows = bonusForUser_(user.Id);
+    const current = latestRows.find(function (row) { return String(row.JuegoId) === gameId; });
     if (current) {
       const currentRecord = bonusRecordValue_(current);
       bestScore = Math.max(Number(current.Puntaje) || 0, score);
       bestRecord = Math.max(currentRecord, record);
-      updateObjectRow_(SHEETS.BONUS, current._row, { Puntaje: bestScore, Record: bestRecord, CompletadoEn: record > currentRecord ? new Date() : current.CompletadoEn || new Date() });
-    } else appendObject_(SHEETS.BONUS, { Id: Utilities.getUuid(), UsuarioId: user.Id, JuegoId: gameId, Puntaje: score, CompletadoEn: new Date(), Record: record });
+      const changes = { Puntaje: bestScore, Record: bestRecord, CompletadoEn: record > currentRecord ? new Date() : current.CompletadoEn || new Date() };
+      updateObjectRow_(SHEETS.BONUS, current._row, changes);
+      Object.assign(current, changes);
+    } else {
+      const created = { Id: Utilities.getUuid(), UsuarioId: user.Id, JuegoId: gameId, Puntaje: score, CompletadoEn: new Date(), Record: record };
+      created._row = appendObject_(SHEETS.BONUS, created);
+      latestRows.push(created);
+    }
+    invalidateUserActivity_(user.Id);
+    cachePut_(bonusCacheKey_(user.Id), latestRows, CACHE_TTL.ACTIVITY);
   } finally { lock.releaseLock(); }
-  invalidateUserActivity_(user.Id);
   return { gameId: gameId, score: score, bestScore: bestScore, bestRecord: bestRecord, completed: true };
 }
 
@@ -573,7 +583,7 @@ function adminEditUserApi_(request) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(5000)) throw new Error("Hay otro usuario guardándose. Intenta nuevamente.");
   try {
-    updateObjectRow_(SHEETS.USERS, user._row, { Nombre: name, Cedula: cedula, Telefono: phone, Correo: email, Cargo: cargo, UAD: uad });
+    updateObjectRow_(SHEETS.USERS, user._row, { Nombre: name, Cedula: cedula, Telefono: phone, Correo: email, Cargo: cargo, UAD: uad, SessionVersion: nextSessionVersion_(user) });
     revokeUserSessions_(user.Id);
     invalidateUserCache_(user);
     const updated = objectAtRow_(SHEETS.USERS, user._row);
@@ -594,7 +604,7 @@ function adminDeleteUserApi_(request) {
     Nombre: "Usuario eliminado", Cedula: "ELIMINADO-" + suffix, Telefono: "",
     Correo: "eliminado-" + suffix + "@pasaporte.local", Cargo: "", UAD: "",
     Avatar: "avatar:v2:2:0:1:0:", PasswordSalt: Utilities.getUuid(),
-    PasswordHash: Utilities.getUuid().replace(/-/g, ""), Activo: false,
+    PasswordHash: Utilities.getUuid().replace(/-/g, ""), Activo: false, SessionVersion: nextSessionVersion_(user),
   });
   revokeUserSessions_(user.Id);
   invalidateUserCache_(user);
@@ -826,7 +836,14 @@ function saveEvidence_(user, mission, input) {
   const name = safeEvidenceName_(input.name || (mime.indexOf("image/") === 0 ? "evidencia.jpg" : "evidencia.mp4"));
   const folder = evidenceFolder_();
   const file = folder.createFile(Utilities.newBlob(bytes, mime, String(mission.Id) + "-" + String(user.Id).slice(0, 8) + "-" + name));
-  appendObject_(SHEETS.EVIDENCE, { Id: Utilities.getUuid(), UsuarioId: user.Id, MisionId: mission.Id, ArchivoId: file.getId(), NombreArchivo: name, TipoMime: mime, TamanoBytes: bytes.length, Url: file.getUrl(), Estado: "RECIBIDA", CreadoEn: new Date() });
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(12000)) {
+    try { file.setTrashed(true); } catch (error) { /* La limpieza de Drive no bloquea el reintento. */ }
+    throw busyError_("Estamos registrando otras evidencias. Reintentando…");
+  }
+  try {
+    appendObject_(SHEETS.EVIDENCE, { Id: Utilities.getUuid(), UsuarioId: user.Id, MisionId: mission.Id, ArchivoId: file.getId(), NombreArchivo: name, TipoMime: mime, TamanoBytes: bytes.length, Url: file.getUrl(), Estado: "RECIBIDA", CreadoEn: new Date() });
+  } finally { lock.releaseLock(); }
   CacheService.getScriptCache().remove(CACHE_KEYS.ADMIN_EVIDENCE);
   return file.getId();
 }
@@ -905,26 +922,106 @@ function allowedMission_(user, missionId) {
 }
 
 function upsertProgress_(userId, missionId, status) {
-  const current = progressForUser_(userId).find(function (row) { return String(row.MisionId) === String(missionId); });
+  const rows = progressForUser_(userId);
+  const current = rows.find(function (row) { return String(row.MisionId) === String(missionId); });
   const now = new Date();
   if (current) {
-    const changes = { Estado: status };
+    // El progreso solo avanza: una petición STARTED atrasada nunca puede
+    // devolver una misión ya completada al estado inicial.
+    const finalStatus = String(current.Estado) === "COMPLETADA" || status === "COMPLETADA" ? "COMPLETADA" : status;
+    const changes = { Estado: finalStatus };
     if (!current.IniciadaEn) changes.IniciadaEn = now;
-    if (status === "COMPLETADA") changes.CompletadaEn = now;
+    if (finalStatus === "COMPLETADA" && !current.CompletadaEn) changes.CompletadaEn = now;
     updateObjectRow_(SHEETS.PROGRESS, current._row, changes);
-  } else appendObject_(SHEETS.PROGRESS, { Id: Utilities.getUuid(), UsuarioId: userId, MisionId: missionId, Estado: status, IniciadaEn: now, CompletadaEn: status === "COMPLETADA" ? now : "" });
-  invalidateUserActivity_(userId);
+    const updatedRows = rows.map(function (row) { return String(row.MisionId) === String(missionId) ? Object.assign({}, row, changes) : row; });
+    invalidateUserActivity_(userId);
+    cachePut_(progressCacheKey_(userId), updatedRows, CACHE_TTL.ACTIVITY);
+    return;
+  }
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(12000)) throw busyError_("Estamos guardando el progreso de otros participantes. Reintentando…");
+  try {
+    const latestRows = progressForUser_(userId);
+    const existing = latestRows.find(function (row) { return String(row.MisionId) === String(missionId); });
+    if (existing) {
+      const finalStatus = String(existing.Estado) === "COMPLETADA" || status === "COMPLETADA" ? "COMPLETADA" : status;
+      const changes = { Estado: finalStatus, IniciadaEn: existing.IniciadaEn || now, CompletadaEn: finalStatus === "COMPLETADA" ? existing.CompletadaEn || now : "" };
+      updateObjectRow_(SHEETS.PROGRESS, existing._row, changes);
+      Object.assign(existing, changes);
+    } else {
+      const created = { Id: Utilities.getUuid(), UsuarioId: userId, MisionId: missionId, Estado: status, IniciadaEn: now, CompletadaEn: status === "COMPLETADA" ? now : "" };
+      created._row = appendObject_(SHEETS.PROGRESS, created);
+      latestRows.push(created);
+    }
+    invalidateUserActivity_(userId);
+    cachePut_(progressCacheKey_(userId), latestRows, CACHE_TTL.ACTIVITY);
+  } finally { lock.releaseLock(); }
 }
 
 function requireSession_(token) {
+  // Los tokens nuevos se verifican antes de devolver la caché. La consulta del
+  // usuario normalmente también sale de caché, pero permite revocar una sesión
+  // inmediatamente al editar, desactivar o restablecer la contraseña.
+  const signedSession = readSessionToken_(token);
+  if (signedSession) {
+    const signedUser = findUserByCedula_(signedSession.cedula);
+    if (!signedUser || !truthy_(signedUser.Activo) || sessionVersion_(signedUser) !== String(signedSession.version)) throw new Error("Tu sesión cambió o fue revocada. Inicia sesión nuevamente.");
+    const signedExpiry = new Date(Number(signedSession.expiresAt));
+    cachePut_(sessionCacheKey_(token), { user: signedUser, expiresAt: signedExpiry.toISOString() }, CACHE_TTL.SESSION);
+    return signedUser;
+  }
+  if (String(token || "").indexOf("ps2.") === 0) throw new Error("Tu sesión venció o no es válida. Inicia sesión nuevamente.");
   const cached = cacheGet_(sessionCacheKey_(token));
   if (cached && new Date(cached.expiresAt).getTime() > Date.now() && cached.user && truthy_(cached.user.Activo)) return cached.user;
+  // Compatibilidad temporal con sesiones emitidas por versiones anteriores.
   const session = findObjectByField_(SHEETS.SESSIONS, "Token", token, String);
   if (!session || new Date(session.ExpiraEn).getTime() <= Date.now()) throw new Error("Tu sesión venció. Inicia sesión nuevamente.");
   const user = findUserById_(session.UsuarioId);
   if (!user || !truthy_(user.Activo)) throw new Error("Usuario inactivo.");
   cachePut_(sessionCacheKey_(token), { user: user, expiresAt: new Date(session.ExpiraEn).toISOString() }, CACHE_TTL.SESSION);
   return user;
+}
+
+function sessionVersion_(user) { return String(user && user.SessionVersion || "1"); }
+function nextSessionVersion_(user) { return String(Math.max(Date.now(), Number(sessionVersion_(user)) + 1)); }
+
+function ensureTokenSecret_() {
+  const props = PropertiesService.getScriptProperties();
+  let secret = props.getProperty("PASAPORTE_TOKEN_SECRET");
+  if (!secret) {
+    secret = Utilities.getUuid() + Utilities.getUuid() + Utilities.getUuid();
+    props.setProperty("PASAPORTE_TOKEN_SECRET", secret);
+  }
+  return secret;
+}
+
+function tokenSignature_(payload) {
+  const bytes = Utilities.computeHmacSha256Signature(String(payload), ensureTokenSecret_(), Utilities.Charset.UTF_8);
+  return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/g, "");
+}
+
+function secureEqual_(left, right) {
+  left = String(left || ""); right = String(right || "");
+  let mismatch = left.length ^ right.length;
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index += 1) mismatch |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);
+  return mismatch === 0;
+}
+
+function createSessionToken_(user, expiresAt) {
+  const payload = Utilities.base64EncodeWebSafe(JSON.stringify({ cedula: cleanId_(user.Cedula), expiresAt: expiresAt.getTime(), version: sessionVersion_(user) }), Utilities.Charset.UTF_8).replace(/=+$/g, "");
+  return "ps2." + payload + "." + tokenSignature_(payload);
+}
+
+function readSessionToken_(token) {
+  try {
+    const parts = String(token || "").split(".");
+    if (parts.length !== 3 || parts[0] !== "ps2" || !secureEqual_(parts[2], tokenSignature_(parts[1]))) return null;
+    const json = Utilities.newBlob(Utilities.base64DecodeWebSafe(parts[1])).getDataAsString();
+    const payload = JSON.parse(json);
+    if (!payload.cedula || Number(payload.expiresAt) <= Date.now()) return null;
+    return payload;
+  } catch (error) { return null; }
 }
 
 function requireAdmin_(token) {
@@ -1013,6 +1110,18 @@ function activityRowsForUser_(sheetName, userId, keyBuilder) {
   const key = keyBuilder(userId);
   const cached = cacheGet_(key);
   if (cached !== null) return cached;
+  // Durante la apertura del evento, todos los participantes leen dos snapshots
+  // preparados en lote en vez de ejecutar cientos de búsquedas independientes.
+  const warmUntil = Number(CacheService.getScriptCache().get(CACHE_KEYS.EVENT_WARM_UNTIL)) || 0;
+  if (warmUntil > Date.now()) {
+    const snapshotKey = activitySnapshotKey_(sheetName, userId);
+    const snapshot = snapshotKey ? cacheGet_(snapshotKey) : null;
+    if (snapshot !== null) {
+      const warmRows = snapshot[String(userId)] || [];
+      cachePut_(key, warmRows, CACHE_TTL.ACTIVITY);
+      return warmRows;
+    }
+  }
   const rows = findObjectsByField_(sheetName, "UsuarioId", userId, String);
   cachePut_(key, rows, CACHE_TTL.ACTIVITY);
   return rows;
@@ -1048,6 +1157,9 @@ function findUserByCedula_(cedula) {
   const key = userCedulaCacheKey_(cedula);
   const cached = cacheGet_(key);
   if (cached) return cached;
+  warmUserCaches_();
+  const warmed = cacheGet_(key);
+  if (warmed) return warmed;
   const user = findObjectByField_(SHEETS.USERS, "Cedula", cedula, cleanId_);
   if (user) cacheUser_(user);
   return user;
@@ -1068,9 +1180,91 @@ function cacheUser_(user) {
   cachePut_(userIdCacheKey_(user.Id), user, CACHE_TTL.USER);
 }
 
+function warmUserCaches_() {
+  const cache = CacheService.getScriptCache();
+  try { if (cache.get(CACHE_KEYS.USERS_WARM)) return true; } catch (error) { return false; }
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(2500)) return false;
+  try {
+    if (cache.get(CACHE_KEYS.USERS_WARM)) return true;
+    const entries = {};
+    sheetObjects_(SHEETS.USERS).filter(function (user) { return truthy_(user.Activo); }).forEach(function (user) {
+      const serialized = JSON.stringify(user);
+      if (serialized.length < 95000) {
+        entries[userCedulaCacheKey_(user.Cedula)] = serialized;
+      }
+    });
+    const keys = Object.keys(entries);
+    for (let index = 0; index < keys.length; index += 90) {
+      const batch = {};
+      keys.slice(index, index + 90).forEach(function (key) { batch[key] = entries[key]; });
+      cache.putAll(batch, CACHE_TTL.USER);
+    }
+    cache.put(CACHE_KEYS.USERS_WARM, "1", CACHE_TTL.USER);
+    return true;
+  } catch (error) { return false; }
+  finally { lock.releaseLock(); }
+}
+
+function prepararEvento300Usuarios() {
+  CacheService.getScriptCache().remove(CACHE_KEYS.USERS_WARM);
+  const warmed = warmUserCaches_();
+  const activity = warmActivitySnapshots_();
+  activeMissions_(); activeBadges_(); catalogsApi_();
+  return warmed && activity.ready
+    ? "Preparación completa: " + activity.progress + " avances y " + activity.bonus + " resultados Bonus disponibles para el pico de ingresos."
+    : "La preparación quedó incompleta (la caché puede estar llena o los datos superan su tamaño). Intenta nuevamente antes del evento.";
+}
+
+function warmActivitySnapshots_() {
+  const progress = Array.from({ length: ACTIVITY_SNAPSHOT_SHARDS }, function () { return {}; });
+  const bonus = Array.from({ length: ACTIVITY_SNAPSHOT_SHARDS }, function () { return {}; });
+  let progressCount = 0;
+  let bonusCount = 0;
+  sheetObjects_(SHEETS.PROGRESS).forEach(function (row) {
+    const id = String(row.UsuarioId);
+    const shard = progress[activityShard_(id)];
+    if (!shard[id]) shard[id] = [];
+    shard[id].push(row);
+    progressCount += 1;
+  });
+  sheetObjects_(SHEETS.BONUS).forEach(function (row) {
+    const id = String(row.UsuarioId);
+    const shard = bonus[activityShard_(id)];
+    if (!shard[id]) shard[id] = [];
+    shard[id].push(row);
+    bonusCount += 1;
+  });
+  progress.forEach(function (snapshot, shard) { cachePut_(CACHE_KEYS.PROGRESS_SNAPSHOT + shard, snapshot, 600); });
+  bonus.forEach(function (snapshot, shard) { cachePut_(CACHE_KEYS.BONUS_SNAPSHOT + shard, snapshot, 600); });
+  let ready = true;
+  for (let shard = 0; shard < ACTIVITY_SNAPSHOT_SHARDS; shard += 1) {
+    if (cacheGet_(CACHE_KEYS.PROGRESS_SNAPSHOT + shard) === null || cacheGet_(CACHE_KEYS.BONUS_SNAPSHOT + shard) === null) ready = false;
+  }
+  if (ready) CacheService.getScriptCache().put(CACHE_KEYS.EVENT_WARM_UNTIL, String(Date.now() + 10 * 60 * 1000), 600);
+  return {
+    ready: ready,
+    progress: progressCount,
+    bonus: bonusCount,
+  };
+}
+
+function activityShard_(userId) {
+  const value = String(userId || "");
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  return hash % ACTIVITY_SNAPSHOT_SHARDS;
+}
+
+function activitySnapshotKey_(sheetName, userId) {
+  if (sheetName === SHEETS.PROGRESS) return CACHE_KEYS.PROGRESS_SNAPSHOT + activityShard_(userId);
+  if (sheetName === SHEETS.BONUS) return CACHE_KEYS.BONUS_SNAPSHOT + activityShard_(userId);
+  return "";
+}
+
 function invalidateUserCache_(user) {
   if (!user) return;
-  CacheService.getScriptCache().removeAll([userCedulaCacheKey_(user.Cedula), userIdCacheKey_(user.Id), activeSessionCacheKey_(user.Id), progressCacheKey_(user.Id), bonusCacheKey_(user.Id)]);
+  CacheService.getScriptCache().removeAll([userCedulaCacheKey_(user.Cedula), userIdCacheKey_(user.Id), activeSessionCacheKey_(user.Id), progressCacheKey_(user.Id), bonusCacheKey_(user.Id), CACHE_KEYS.USERS_WARM]);
 }
 
 function hashPassword_(password, salt) {
@@ -1325,6 +1519,34 @@ function cachePut_(key, value, seconds) {
   } catch (error) {
     // La caché acelera la aplicación, pero nunca debe impedir una operación válida.
   }
+}
+function busyError_(message) {
+  const error = new Error(message || "El sistema está procesando varias solicitudes. Reintentando…");
+  error.retryable = true;
+  return error;
+}
+function requestClaimLock_() {
+  const documentLock = typeof LockService.getDocumentLock === "function" ? LockService.getDocumentLock() : null;
+  return documentLock || LockService.getScriptLock();
+}
+function claimRequest_(key) {
+  const lock = requestClaimLock_();
+  if (!lock.tryLock(2000)) throw busyError_("Hay varias solicitudes guardándose. Reintentando…");
+  try {
+    const previous = cacheGet_(key);
+    if (previous && previous.status === "done") return { repeated: true, data: previous.data };
+    if (previous && previous.status === "pending") throw busyError_("Esta operación todavía se está guardando. Reintentando…");
+    if (previous) return { repeated: true, data: previous };
+    cachePut_(key, { status: "pending", startedAt: Date.now() }, 120);
+    return { repeated: false };
+  } finally { lock.releaseLock(); }
+}
+function completeRequest_(key, data) { cachePut_(key, { status: "done", data: data }, 600); }
+function releaseRequestClaim_(key) {
+  try {
+    const current = cacheGet_(key);
+    if (current && current.status === "pending") CacheService.getScriptCache().remove(key);
+  } catch (error) { /* La expiración automática permite reintentar. */ }
 }
 function json_(payload) { return ContentService.createTextOutput(JSON.stringify(payload)).setMimeType(ContentService.MimeType.JSON); }
 function required_(value, message) { if (value === undefined || value === null || String(value).trim() === "") throw new Error(message); return String(value).trim(); }

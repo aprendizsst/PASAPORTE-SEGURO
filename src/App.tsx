@@ -139,10 +139,12 @@ const apiReadCache = new Map<string, { expiresAt: number; value: unknown }>();
 const WRITE_API_ACTIONS = new Set(["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "verifyPasswordResetCode", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode", "adminManageBonusRecord"]);
 
 function apiPolicy(action: string, payload?: Record<string, unknown>) {
-  if (action === "login" || action === "register") return { attempts: 2, timeoutMs: 22000 };
+  if (action === "login") return { attempts: 5, timeoutMs: 25000 };
+  if (action === "session") return { attempts: 4, timeoutMs: 20000 };
+  if (action === "register") return { attempts: 3, timeoutMs: 30000 };
   if (action === "requestPasswordReset" || action === "verifyPasswordResetCode") return { attempts: 2, timeoutMs: 20000 };
   if (action === "completeMission" && payload?.evidence) return { attempts: 2, timeoutMs: 45000 };
-  if (WRITE_API_ACTIONS.has(action)) return { attempts: 3, timeoutMs: 14000 };
+  if (WRITE_API_ACTIONS.has(action)) return { attempts: 4, timeoutMs: 20000 };
   return { attempts: 2, timeoutMs: 10000 };
 }
 
@@ -207,9 +209,17 @@ async function callApi(action: string, payload: Record<string, unknown> = {}) {
         let result: { ok?: boolean; message?: string; data?: unknown };
         try { result = JSON.parse(responseText); }
         catch {
-          throw new Error("Apps Script no devolvió una respuesta válida. Verifica que la implementación sea pública y termine en /exec.");
+          const error = new Error("Apps Script no devolvió una respuesta válida. Verifica que la implementación sea pública y termine en /exec.") as Error & { retryable?: boolean };
+          // Google puede responder con una página temporal de cuota antes de que
+          // Code.gs alcance a generar JSON. Solo esos mensajes se reintentan.
+          error.retryable = /too many|exceeded|quota|temporar|service unavailable|try again|intenta de nuevo/i.test(responseText);
+          throw error;
         }
-        if (!result.ok) throw new Error(result.message || "No fue posible completar la solicitud.");
+        if (!result.ok) {
+          const error = new Error(result.message || "No fue posible completar la solicitud.") as Error & { retryable?: boolean };
+          error.retryable = Boolean((result as { retryable?: boolean }).retryable);
+          throw error;
+        }
         if (inflightKey && cacheTtl) apiReadCache.set(inflightKey, { expiresAt: Date.now() + cacheTtl, value: result.data });
         return result.data;
       } catch (error) {
@@ -217,7 +227,8 @@ async function callApi(action: string, payload: Record<string, unknown> = {}) {
         const aborted = error instanceof DOMException && error.name === "AbortError";
         const retryable = aborted || (error as Error & { retryable?: boolean })?.retryable || error instanceof TypeError;
         if (!retryable || attempt === policy.attempts - 1) break;
-        await new Promise((resolve) => window.setTimeout(resolve, 450 * (2 ** attempt) + Math.random() * 180));
+        const retryWindow = Math.min(8000, 900 * (2 ** attempt));
+        await new Promise((resolve) => window.setTimeout(resolve, retryWindow * (0.5 + Math.random())));
       } finally {
         window.clearTimeout(timeout);
       }

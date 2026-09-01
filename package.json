@@ -1,13 +1,13 @@
 {
   "name": "pasaporte-seguro-2026",
   "private": true,
-  "version": "3.2.22",
+  "version": "3.2.23",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "node --test tests/admin-regression.test.cjs"
+    "test": "node --test tests/*.test.cjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",

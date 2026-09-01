@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const os = require('node:os');
+const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
 const buildDir = fs.mkdtempSync(path.join(os.tmpdir(), 'passport-admin-tests-'));
@@ -36,9 +37,9 @@ const clean = (value) => JSON.parse(JSON.stringify(value));
 function backend() {
   const data = {
     Usuarios: [
-      { Id: 'a', Nombre: 'Ana', UAD: ' UAD CHIQUINQUIRA ', Activo: true, Rol: 'USER' },
-      { Id: 'b', Nombre: 'Bruno', UAD: 'UAD Duitama', Activo: true, Rol: 'USER' },
-      { Id: 'admin', Nombre: 'Admin', UAD: 'Sede Central', Activo: true, Rol: 'ADMIN' },
+      { Id: 'a', Nombre: 'Ana', Cedula: '10001', UAD: ' UAD CHIQUINQUIRA ', Activo: true, Rol: 'USER', SessionVersion: '1' },
+      { Id: 'b', Nombre: 'Bruno', Cedula: '10002', UAD: 'UAD Duitama', Activo: true, Rol: 'USER', SessionVersion: '1' },
+      { Id: 'admin', Nombre: 'Admin', Cedula: '99999', UAD: 'Sede Central', Activo: true, Rol: 'ADMIN', SessionVersion: '1' },
     ],
     Catalogos: [{ Tipo: 'UAD', Valor: 'UAD Chiquinquirá', Activo: true }, { Tipo: 'UAD', Valor: 'UAD Duitama', Activo: true }],
     Misiones: [
@@ -52,11 +53,42 @@ function backend() {
   };
   for (const rows of Object.values(data)) rows.forEach((row, i) => row._row = i + 2);
   const cache = new Map();
-  const ctx = vm.createContext({ console, LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) }, CacheService: { getScriptCache: () => ({ remove: (k) => cache.delete(k), removeAll: (keys) => keys.forEach((k) => cache.delete(k)) }) } });
+  const properties = new Map();
+  const lock = () => ({ tryLock: () => true, releaseLock() {} });
+  const scriptCache = {
+    get: (key) => cache.get(key) ?? null,
+    put: (key, value) => cache.set(key, String(value)),
+    putAll: (values) => Object.entries(values).forEach(([key, value]) => cache.set(key, String(value))),
+    remove: (key) => cache.delete(key),
+    removeAll: (keys) => keys.forEach((key) => cache.delete(key)),
+  };
+  const scriptProperties = {
+    getProperty: (key) => properties.get(key) ?? null,
+    setProperty: (key, value) => properties.set(key, String(value)),
+    deleteProperty: (key) => properties.delete(key),
+  };
+  const toBuffer = (value) => Buffer.isBuffer(value) ? value : Array.isArray(value) ? Buffer.from(value) : Buffer.from(String(value));
+  const ctx = vm.createContext({
+    console,
+    LockService: { getScriptLock: lock, getDocumentLock: lock },
+    CacheService: { getScriptCache: () => scriptCache },
+    PropertiesService: { getScriptProperties: () => scriptProperties },
+    Utilities: {
+      Charset: { UTF_8: 'utf8' }, DigestAlgorithm: { SHA_256: 'sha256' },
+      getUuid: () => crypto.randomUUID(),
+      computeHmacSha256Signature: (value, key) => [...crypto.createHmac('sha256', String(key)).update(String(value)).digest()],
+      computeDigest: (_algorithm, value) => [...crypto.createHash('sha256').update(String(value)).digest()],
+      base64EncodeWebSafe: (value) => toBuffer(value).toString('base64url'),
+      base64DecodeWebSafe: (value) => [...Buffer.from(String(value), 'base64url')],
+      newBlob: (value) => ({ getDataAsString: () => toBuffer(value).toString('utf8') }),
+    },
+  });
   vm.runInContext(fs.readFileSync(path.join(root, 'apps-script/Code.gs'), 'utf8'), ctx);
+  const nativeRequireSession = ctx.requireSession_;
   ctx.sheetObjects_ = (name) => data[name].map((row) => ({ ...row }));
-  ctx.cacheGet_ = (key) => cache.has(key) ? clean(cache.get(key)) : null;
-  ctx.cachePut_ = (key, value) => cache.set(key, clean(value));
+  ctx.findObjectsByField_ = (name, field, value, normalizer) => data[name]
+    .filter((row) => normalizer(row[field]) === normalizer(value))
+    .map((row) => ({ ...row }));
   ctx.requireSession_ = (token) => {
     const user = data.Usuarios.find((user) => user.Id === token && user.Activo);
     if (!user) throw Error('Sesión no válida');
@@ -65,10 +97,8 @@ function backend() {
   ctx.appendObject_ = (name, row) => data[name].push({ ...row, _row: data[name].length + 2 });
   ctx.updateObjectRow_ = (name, number, update) => Object.assign(data[name].find((row) => row._row === number), update);
   ctx.generateUniqueMissionCode_ = () => 'NEW123';
-  ctx.progressForUser_ = () => [];
-  ctx.bonusForUser_ = () => [];
   ctx.activeBadges_ = () => [];
-  return { ctx, data };
+  return { ctx, data, nativeRequireSession, cache };
 }
 
 test('paginación: límites 0, 10, 11, 20, 21 y sin elementos duplicados', () => {
@@ -250,15 +280,21 @@ function eventTarget(extra = {}) {
 
 test('sincronización: deduplica, pausa en Bonus, limpia eventos e ignora respuestas antiguas', async () => {
   let now = 100000;
-  const timers = new Set();
-  const window = eventTarget({ setInterval(cb) { timers.add(cb); return cb; }, clearInterval(cb) { timers.delete(cb); } });
+  let timerId = 0;
+  const timers = new Map();
+  const window = eventTarget({
+    setTimeout(cb, delay) { const id = ++timerId; timers.set(id, { cb, delay }); return id; },
+    clearTimeout(id) { timers.delete(id); },
+  });
   const document = eventTarget({ hidden: false });
   const navigator = { onLine: true };
   const runner = hookRunner('useMissionSync.ts', 'useMissionSync', { window, document, navigator, Date: class extends Date { static now() { return now; } } });
   const reads = [], synced = [];
   let props = { token: 'a', active: true, view: 'missions', load: (token) => new Promise((resolve, reject) => reads.push({ token, resolve, reject })), onSync: (data) => synced.push(data) };
   let result = runner.render(props);
-  assert.equal(reads.length, 1);
+  assert.equal(reads.length, 0); // El bundle de login ya trae las misiones.
+  assert.equal(timers.size, 1);
+  assert.ok([...timers.values()][0].delay >= 120000 && [...timers.values()][0].delay <= 210000);
   void result.refresh(); void result.refresh();
   assert.equal(reads.length, 1);
   reads[0].resolve('original'); await flush();
@@ -266,7 +302,7 @@ test('sincronización: deduplica, pausa en Bonus, limpia eventos e ignora respue
   window.emit('focus');
   assert.equal(reads.length, 1);
   now += 60000;
-  timers.forEach((cb) => cb());
+  window.emit('focus');
   assert.equal(reads.length, 2);
   props = { ...props, view: 'bonus', active: false };
   runner.render(props);
@@ -275,7 +311,9 @@ test('sincronización: deduplica, pausa en Bonus, limpia eventos e ignora respue
   reads[1].resolve('late response'); await flush();
   assert.deepEqual(synced, ['original']);
   props = { ...props, token: 'b', view: 'missions', active: true };
-  runner.render(props);
+  result = runner.render(props);
+  assert.equal(reads.length, 2);
+  void result.refresh();
   assert.equal(reads[2].token, 'b');
   reads[2].reject(Error('Sin respuesta')); await flush();
   result = runner.render(props);
@@ -294,7 +332,7 @@ test('sincronización: deduplica, pausa en Bonus, limpia eventos e ignora respue
   navigator.onLine = true;
   document.hidden = true;
   now += 60000;
-  timers.forEach((cb) => cb());
+  document.emit('visibilitychange');
   assert.equal(reads.length, 4);
   document.hidden = false;
   document.emit('visibilitychange');
@@ -303,4 +341,53 @@ test('sincronización: deduplica, pausa en Bonus, limpia eventos e ignora respue
   reads[4].resolve('after unmount'); await flush();
   assert.equal(synced.length, 2);
   assert.equal(timers.size, 0);
+});
+
+test('300 dispositivos distribuyen la sincronización periódica sin una ráfaga común', () => {
+  const { missionSyncDelay } = loadSource('useMissionSync.ts');
+  const seconds = Array.from({ length: 300 }, (_, index) => Math.floor(missionSyncDelay(`session-${index}`, 0) / 1000));
+  assert.ok(seconds.every((second) => second >= 120 && second <= 210));
+  const buckets = new Map();
+  seconds.forEach((second) => buckets.set(second, (buckets.get(second) || 0) + 1));
+  assert.ok(Math.max(...buckets.values()) <= 8, `ráfaga inesperada: ${Math.max(...buckets.values())} solicitudes/s`);
+  assert.ok(buckets.size >= 70, `distribución insuficiente: ${buckets.size} segundos usados`);
+});
+
+test('sesiones firmadas no escriben por login y se revocan al cambiar su versión', () => {
+  const { ctx, data, nativeRequireSession } = backend();
+  const user = data.Usuarios[0];
+  const token = ctx.createSessionToken_(user, new Date(Date.now() + 60000));
+  assert.match(token, /^ps2\./);
+  assert.equal(nativeRequireSession(token).Id, user.Id);
+  user.SessionVersion = '2';
+  ctx.invalidateUserCache_(user);
+  assert.throws(() => nativeRequireSession(token), /revocada/);
+  const source = fs.readFileSync(path.join(root, 'apps-script/Code.gs'), 'utf8');
+  const loginBody = source.slice(source.indexOf('function loginApi_'), source.indexOf('function sessionApi_'));
+  assert.doesNotMatch(loginBody, /appendObject_\(SHEETS\.SESSIONS/);
+});
+
+test('progreso completado es monotónico y los reintentos comparten un resultado', () => {
+  const { ctx, data } = backend();
+  data.Progreso.push({ Id: 'p1', UsuarioId: 'a', MisionId: 1, Estado: 'COMPLETADA', IniciadaEn: new Date(), CompletadaEn: new Date(), _row: 2 });
+  ctx.progressForUser_ = (userId) => data.Progreso.filter((row) => row.UsuarioId === userId).map((row) => ({ ...row }));
+  ctx.upsertProgress_('a', 1, 'INICIADA');
+  assert.equal(data.Progreso[0].Estado, 'COMPLETADA');
+  const key = 'pasaporte:request:completeBonus:req-1';
+  assert.equal(ctx.claimRequest_(key).repeated, false);
+  assert.throws(() => ctx.claimRequest_(key), (error) => error.retryable === true);
+  ctx.completeRequest_(key, { saved: true });
+  assert.deepEqual(clean(ctx.claimRequest_(key)), { repeated: true, data: { saved: true } });
+});
+
+test('preparación del evento sirve progreso y Bonus sin búsquedas por participante', () => {
+  const { ctx, data } = backend();
+  data.Progreso.push({ Id: 'p2', UsuarioId: 'a', MisionId: 2, Estado: 'INICIADA', _row: 2 });
+  data.Bonus.push({ Id: 'b2', UsuarioId: 'a', JuegoId: 'sudoku', Puntaje: 120, Record: 120, _row: 2 });
+  const snapshot = ctx.warmActivitySnapshots_();
+  assert.equal(snapshot.ready, true);
+  ctx.findObjectsByField_ = () => { throw Error('No debe consultar la hoja durante el pico'); };
+  assert.equal(ctx.progressForUser_('a')[0].MisionId, 2);
+  assert.equal(ctx.bonusForUser_('a')[0].JuegoId, 'sudoku');
+  assert.deepEqual(clean(ctx.progressForUser_('usuario-sin-datos')), []);
 });
