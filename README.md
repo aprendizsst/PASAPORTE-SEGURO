@@ -70,6 +70,8 @@ Si el administrador pierde el acceso y tampoco puede recibir el código por corr
 
 La conexión se administra únicamente desde `public/config.js`. El inicio de sesión no muestra ni acepta campos para reemplazar la URL y cualquier configuración antigua guardada en el navegador se ignora.
 
+La aplicación carga este archivo antes de iniciar React y añade un identificador variable a la solicitud para evitar copias antiguas en caché. Si el archivo no carga, la URL está vacía o no corresponde a una implementación pública terminada en `/exec`, el acceso queda bloqueado y se muestra el motivo preciso. No existe un inicio de sesión de demostración que pueda ocultar una configuración incorrecta.
+
 > El backend valida la sesión y el rol en cada operación administrativa. Las contraseñas no se guardan en texto visible.
 
 La recuperación normal funciona en tres pasos obligatorios: envío del código al correo registrado, validación del código y creación de la contraseña nueva. Después de validar el código, el servidor entrega un comprobante temporal de 10 minutos; sin ese comprobante no permite cambiar la contraseña. Como respaldo, el administrador puede generar desde la pestaña **Usuarios** un código temporal válido por 24 horas. Ambos tipos de código se almacenan cifrados y se invalidan después de usarse.
@@ -99,7 +101,7 @@ npm install
 npm run dev
 ```
 
-Sin una URL en `public/config.js`, la aplicación se abre en modo demostración. Para revisar el panel administrativo del modo demostración use cédula `1000000000` y contraseña `Demo1234*`.
+Sin una URL válida en `public/config.js`, la aplicación bloquea el inicio de sesión. Configure primero la implementación pública de Apps Script terminada en `/exec`.
 
 ## Activar o desactivar mejoras visuales
 

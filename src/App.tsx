@@ -94,7 +94,7 @@ const demoBonusLeaderboard: BonusLeaderboardEntry[] = [
 ];
 
 declare global {
-  interface Window { PASSPORT_CONFIG?: { apiUrl?: string; features?: Record<string, boolean> } }
+  interface Window { PASSPORT_CONFIG?: { apiUrl?: string; features?: Record<string, boolean> }; PASSPORT_CONFIG_LOAD_ERROR?: boolean }
 }
 
 function normalizeAppsScriptUrl(value: string) {
@@ -113,6 +113,15 @@ function getApiUrl() {
   // La conexión es una configuración administrativa de despliegue. Nunca se
   // acepta una URL guardada o modificada desde la interfaz del participante.
   return normalizeAppsScriptUrl(window.PASSPORT_CONFIG?.apiUrl || "");
+}
+
+function apiConfigurationIssue() {
+  const url = getApiUrl();
+  if (!url) return window.PASSPORT_CONFIG_LOAD_ERROR
+    ? "No fue posible cargar config.js. Publica nuevamente todos los archivos del frontend."
+    : "config.js no contiene la URL de Apps Script. Contacta al administrador.";
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/i.test(url)) return "La URL configurada no es una implementación pública de Apps Script terminada en /exec.";
+  return "";
 }
 
 function featureEnabled(name: string) {
@@ -374,6 +383,8 @@ export default function Home() {
   const badges = useMemo(() => buildBadges({ missions: visibleMissions, completed, points, bonusCompleted, definitions: badgeDefinitions }), [badgeDefinitions, bonusCompleted, completed, points, visibleMissions]);
   const unlockedBadges = badges.filter((badge) => badge.unlocked).length;
   const viewOrder: View[] = ["dashboard", "guide", "missions", "bonus", "badges", "history", "complete", "admin"];
+  const configurationIssue = apiConfigurationIssue();
+  const apiConfigured = !configurationIssue;
 
   useEffect(() => {
     if (!getApiUrl()) return;
@@ -503,11 +514,9 @@ export default function Home() {
     const password = String(form.get("password") || "");
     setBusyAction("login");
     try {
-      if (getApiUrl()) {
-        const data = await callApi("login", { cedula, password });
-        applyBundle(data as SessionBundle);
-      } else if (cedula === "1000000000" && password === "Demo1234*") setUser({ ...demoUser, name: "Administrador Festival", cedula, email: "admin@empresa.com", role: "ADMIN", avatar: "avatar:v1:3:1:0:5:1" });
-      else if (cedula && password) setUser({ ...demoUser, cedula });
+      if (configurationIssue) throw new Error(configurationIssue);
+      const data = await callApi("login", { cedula, password });
+      applyBundle(data as SessionBundle);
       revealPassport("dashboard");
     } catch (error) {
       const message = error instanceof Error ? error.message : "No fue posible iniciar sesión.";
@@ -570,10 +579,9 @@ export default function Home() {
     const newUser = { name: String(form.get("name") || "Nuevo participante"), cedula: String(form.get("cedula") || ""), phone: String(form.get("phone") || ""), email: String(form.get("email") || ""), cargo: String(form.get("cargo") || catalogs.cargos[0]), uad: String(form.get("uad") || catalogs.uads[0]), avatar: encodeAvatar(avatarDraft), role: "USER" as Role };
     setBusyAction("register");
     try {
-      if (getApiUrl()) {
-        const data = await callApi("register", { user: newUser, password: String(form.get("password") || "") });
-        applyBundle(data as SessionBundle);
-      } else setUser(newUser);
+      if (configurationIssue) throw new Error(configurationIssue);
+      const data = await callApi("register", { user: newUser, password: String(form.get("password") || "") });
+      applyBundle(data as SessionBundle);
       setCompleted([]); setStarted([]); setView("guide"); setCreationCelebration(true);
       window.setTimeout(() => { setCreationCelebration(false); revealPassport("guide"); }, 2700);
     } catch (error) { notify(error instanceof Error ? error.message : "No fue posible crear el pasaporte."); }
@@ -866,9 +874,9 @@ export default function Home() {
     </section>}
 
     {opened && !user && <section className="auth-stage" id="passport-access"><div className="auth-book"><aside className="auth-visual"><p className="mini-kicker">FESTIVAL 2026</p><div className="passport-mark">P</div><h2>Tu ruta segura comienza aquí.</h2><p>Regístrate, visita las estaciones y colecciona cada sello del festival.</p><div className="mini-route">{stations.map((s) => <span key={s.name} style={{ background: s.color }}><StationIcon station={s.name} /></span>)}</div></aside>
-      <div className="auth-form-side"><div className="auth-switch" role="tablist"><button className={authMode === "login" ? "active" : ""} onClick={() => setAuthMode("login")}>Iniciar sesión</button><button className={authMode === "register" ? "active" : ""} onClick={() => setAuthMode("register")}>Crear pasaporte</button></div>
-        {authMode === "login" ? <form className="passport-form" onSubmit={login}><p className="step-label">BIENVENIDO DE NUEVO</p><h2>Continúa tu recorrido</h2><label>Número de cédula<input name="cedula" inputMode="numeric" maxLength={25} autoComplete="username" placeholder="Ej. 1010101010" required /></label><label>Contraseña<input name="password" type="password" maxLength={128} autoComplete="current-password" placeholder="Tu contraseña" required /></label><button className="primary-button" type="submit" disabled={busyAction === "login"}>{busyAction === "login" ? <><LoadingDot /> Verificando...</> : <>Ingresar al pasaporte <UiIcon name="arrow" /></>}</button><button className="forgot-password" type="button" onClick={() => { setAuthMode("recover"); setRecoveryStage("request"); setRecoveryTicket(""); }}>¿Olvidaste tu contraseña?</button>{!getApiUrl() && <p className="demo-note">Demostración administrador: <b>1000000000</b> / <b>Demo1234*</b></p>}</form>
-        : authMode === "register" ? <form className="passport-form register-grid" onSubmit={register}><div className="form-heading"><p className="step-label">NUEVO VIAJERO</p><h2>Crea tu pasaporte</h2></div><button className="register-avatar-card wide" type="button" onClick={() => openAvatarStudio("register")}><AvatarPortrait value={encodeAvatar(avatarDraft)} size="small" /><span><b>Crea tu foto de pasaporte</b><small>Elige rostro, cabello, ropa y accesorios antes de registrarte.</small></span><i>Personalizar →</i></button><label className="wide">Nombre completo<input name="name" maxLength={120} autoComplete="name" placeholder="Nombres y apellidos" required /></label><label>Número de cédula<input name="cedula" inputMode="numeric" maxLength={25} autoComplete="username" placeholder="Sin puntos" required /></label><label>Número de teléfono<input name="phone" type="tel" maxLength={30} autoComplete="tel" placeholder="300 000 0000" required /></label><label className="wide">Correo electrónico<input name="email" type="email" maxLength={160} autoComplete="email" placeholder="nombre@empresa.com" required /></label><label>Cargo<select name="cargo">{catalogs.cargos.map((x) => <option key={x}>{x}</option>)}</select></label><label>UAD<select name="uad">{catalogs.uads.map((x) => <option key={x}>{x}</option>)}</select></label><label className="wide">Contraseña<input name="password" type="password" minLength={8} maxLength={128} autoComplete="new-password" placeholder="Mínimo 8 caracteres" required /></label><button className="primary-button wide" type="submit" disabled={busyAction === "register"}>{busyAction === "register" ? <><LoadingDot /> Creando...</> : <>Crear mi pasaporte <UiIcon name="arrow" /></>}</button></form>
+      <div className="auth-form-side"><div className="auth-switch" role="tablist"><button className={authMode === "login" ? "active" : ""} onClick={() => setAuthMode("login")}>Iniciar sesión</button><button className={authMode === "register" ? "active" : ""} onClick={() => setAuthMode("register")} disabled={!apiConfigured}>Crear pasaporte</button></div>
+        {authMode === "login" ? <form className="passport-form" onSubmit={login}><p className="step-label">BIENVENIDO DE NUEVO</p><h2>Continúa tu recorrido</h2>{configurationIssue && <div className="configuration-error" role="alert"><b>Conexión no disponible</b><span>{configurationIssue}</span></div>}<label>Número de cédula<input name="cedula" inputMode="numeric" maxLength={25} autoComplete="username" placeholder="Ej. 1010101010" required disabled={!apiConfigured} /></label><label>Contraseña<input name="password" type="password" maxLength={128} autoComplete="current-password" placeholder="Tu contraseña" required disabled={!apiConfigured} /></label><button className="primary-button" type="submit" disabled={busyAction === "login" || !apiConfigured}>{busyAction === "login" ? <><LoadingDot /> Verificando...</> : <>Ingresar al pasaporte <UiIcon name="arrow" /></>}</button><button className="forgot-password" type="button" disabled={!apiConfigured} onClick={() => { setAuthMode("recover"); setRecoveryStage("request"); setRecoveryTicket(""); }}>¿Olvidaste tu contraseña?</button></form>
+        : authMode === "register" ? <form className="passport-form register-grid" onSubmit={register}><div className="form-heading"><p className="step-label">NUEVO VIAJERO</p><h2>Crea tu pasaporte</h2></div><button className="register-avatar-card wide" type="button" onClick={() => openAvatarStudio("register")}><AvatarPortrait value={encodeAvatar(avatarDraft)} size="small" /><span><b>Crea tu foto de pasaporte</b><small>Elige rostro, cabello, ropa y accesorios antes de registrarte.</small></span><i>Personalizar →</i></button><label className="wide">Nombre completo<input name="name" maxLength={120} autoComplete="name" placeholder="Nombres y apellidos" required /></label><label>Número de cédula<input name="cedula" inputMode="numeric" maxLength={25} autoComplete="username" placeholder="Sin puntos" required /></label><label>Número de teléfono<input name="phone" type="tel" maxLength={30} autoComplete="tel" placeholder="300 000 0000" required /></label><label className="wide">Correo electrónico<input name="email" type="email" maxLength={160} autoComplete="email" placeholder="nombre@empresa.com" required /></label><label>Cargo<select name="cargo">{catalogs.cargos.map((x) => <option key={x}>{x}</option>)}</select></label><label>UAD<select name="uad">{catalogs.uads.map((x) => <option key={x}>{x}</option>)}</select></label><label className="wide">Contraseña<input name="password" type="password" minLength={8} maxLength={128} autoComplete="new-password" placeholder="Mínimo 8 caracteres" required /></label><button className="primary-button wide" type="submit" disabled={busyAction === "register" || !apiConfigured}>{busyAction === "register" ? <><LoadingDot /> Creando...</> : <>Crear mi pasaporte <UiIcon name="arrow" /></>}</button></form>
         : recoveryStage === "request" ? <form className="passport-form recovery-form" onSubmit={requestPasswordReset}><RecoveryProgress step={1} /><p className="step-label">RECUPERAR ACCESO</p><h2>Solicita tu código</h2><p>Escribe la cédula y el correo usados al crear tu pasaporte. Te enviaremos un código válido por 15 minutos.</p><label>Número de cédula<input name="cedula" inputMode="numeric" maxLength={25} required /></label><label>Correo registrado<input name="email" type="email" maxLength={160} autoComplete="email" required /></label><button className="primary-button" type="submit" disabled={busyAction === "request-reset"}>{busyAction === "request-reset" ? <><LoadingDot /> Enviando...</> : <>Enviar código <UiIcon name="key" /></>}</button><button className="forgot-password" type="button" onClick={() => { setRecoveryTicket(""); setRecoveryStage("verify"); }}>Ya tengo un código de respaldo</button><button className="auth-back" type="button" onClick={() => setAuthMode("login")}>← Volver al inicio de sesión</button></form>
         : recoveryStage === "verify" || !recoveryTicket ? <form className="passport-form recovery-form" onSubmit={verifyPasswordResetCode}><RecoveryProgress step={2} /><p className="step-label">VALIDAR IDENTIDAD</p><h2>Ingresa el código</h2><p>Revisa tu correo e introduce el código recibido. No podrás crear una contraseña nueva hasta validarlo.</p><label>Número de cédula<input name="cedula" inputMode="numeric" maxLength={25} defaultValue={recoveryCedula} required /></label><label>Código de recuperación<input name="code" minLength={6} maxLength={12} autoComplete="one-time-code" autoCapitalize="characters" placeholder="Ej. A7K9P2" pattern="[A-Za-z0-9]{6,12}" onInput={(event) => { event.currentTarget.value = event.currentTarget.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12); }} required /></label><button className="primary-button" type="submit" disabled={busyAction === "verify-reset-code"}>{busyAction === "verify-reset-code" ? <><LoadingDot /> Validando...</> : <>Validar código <UiIcon name="check" /></>}</button><button className="auth-back" type="button" onClick={() => { setRecoveryTicket(""); setRecoveryStage("request"); }}>← Solicitar otro código</button></form>
         : <form className="passport-form recovery-form" onSubmit={resetPassword}><RecoveryProgress step={3} /><p className="step-label">CÓDIGO CONFIRMADO</p><h2>Crea una contraseña nueva</h2><div className="recovery-verified" role="status"><span><UiIcon name="check" /></span><div><b>Código validado correctamente</b><small>El acceso está habilitado durante 10 minutos.</small></div></div><label>Número de cédula<input name="cedula" value={recoveryCedula} readOnly /></label><label>Nueva contraseña<input name="password" type="password" minLength={8} maxLength={128} autoComplete="new-password" placeholder="Mínimo 8 caracteres" required /></label><label>Confirmar contraseña<input name="confirmation" type="password" minLength={8} maxLength={128} autoComplete="new-password" placeholder="Repite la contraseña" required /></label><button className="primary-button" type="submit" disabled={busyAction === "reset-password"}>{busyAction === "reset-password" ? <><LoadingDot /> Guardando...</> : <>Guardar nueva contraseña <UiIcon name="check" /></>}</button><button className="auth-back" type="button" onClick={() => { setRecoveryTicket(""); setRecoveryStage("request"); }}>← Reiniciar recuperación</button></form>}

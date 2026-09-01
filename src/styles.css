@@ -400,6 +400,8 @@
 @media(max-width:900px){.badge-admin-grid{grid-template-columns:1fr}.user-management-list article{grid-template-columns:43px 1fr auto}.user-score{display:none}.user-actions{grid-column:2/-1}}
 @media(max-width:600px){.auth-switch{margin-bottom:22px}.badge-icon-picker{grid-template-columns:repeat(5,1fr)}.admin-badge-list{padding:15px}.user-management-list article{grid-template-columns:40px 1fr}.user-actions{grid-column:1/-1}.user-actions button{flex:1;justify-content:center}.recovery-code-card code{font-size:22px}.badge-color-fields{grid-template-columns:1fr 1fr}}
 
+.configuration-error{display:grid;gap:4px;padding:12px 14px;border:1px solid rgba(195,1,10,.24);border-left:4px solid #c3010a;border-radius:10px;background:#fff4f4;color:#6f1519;font-size:12px;line-height:1.45}.configuration-error b{font-size:13px}.configuration-error span{overflow-wrap:anywhere}.auth-switch button:disabled,.forgot-password:disabled{cursor:not-allowed;opacity:.48}
+
 .table-actions{display:flex;align-items:center;gap:7px}.table-actions button{white-space:nowrap}.table-actions button:disabled{opacity:.55;cursor:wait}
 @media(max-width:600px){.table-title{display:grid!important;gap:10px}.table-title .table-actions{display:grid;grid-template-columns:1fr 1fr}.table-title .table-actions button{display:block;width:100%}}
 

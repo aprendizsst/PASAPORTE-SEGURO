@@ -1,5 +1,12 @@
 # Actualización segura a Pasaporte Seguro 3.2
 
+## Revisión 3.2.25 — Carga confiable de Apps Script
+
+- `config.js` se solicita antes de montar React y con un identificador variable para impedir que GitHub Pages, el navegador o un proxy reutilicen una copia anterior con `apiUrl` vacío.
+- El inicio de sesión ahora diferencia configuración ausente, archivo no cargado y URL con formato inválido. En cualquiera de esos casos bloquea ingreso, registro y recuperación y muestra un aviso claro.
+- Se eliminó el acceso de demostración: ninguna credencial local puede simular una conexión correcta ni abrir el panel sin validación del backend.
+- No cambia hojas ni datos. Publique todos los archivos del frontend; si ya usa la revisión 3.2.24 del backend, la actualización de `Code.gs` es opcional y solo cambia el número informado por el diagnóstico.
+
 ## Revisión 3.2.24 — Conexión controlada por el administrador
 
 - Se eliminan el botón **Revisar conexión con Apps Script**, el campo de URL y la acción **Validar y guardar** del inicio de sesión.
