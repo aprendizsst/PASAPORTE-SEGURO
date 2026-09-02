@@ -44,6 +44,8 @@ const CACHE_KEYS = {
   BONUS_SNAPSHOT: "pasaporte:event:bonus:v1:",
 };
 const ACTIVITY_SNAPSHOT_SHARDS = 16;
+const LOAD_TEST_USER_PREFIX = "LOADTEST-";
+const LOAD_TEST_CEDULA_BASE = 990000000000;
 
 const CACHE_TTL = {
   CATALOGS: 21600,
@@ -56,7 +58,7 @@ const CACHE_TTL = {
 const WRITE_ACTIONS = ["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "verifyPasswordResetCode", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode", "adminManageBonusRecord"];
 
 function doGet() {
-  return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.2.25" } });
+  return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.2.26" } });
 }
 
 function doPost(event) {
@@ -1214,6 +1216,142 @@ function prepararEvento300Usuarios() {
   return warmed && activity.ready
     ? "Preparación completa: " + activity.progress + " avances y " + activity.bonus + " resultados Bonus disponibles para el pico de ingresos."
     : "La preparación quedó incompleta (la caché puede estar llena o los datos superan su tamaño). Intenta nuevamente antes del evento.";
+}
+
+/**
+ * Crea participantes temporales para una prueba de carga real sin usar cuentas
+ * de colaboradores. Antes de ejecutarla, defina LOAD_TEST_PASSWORD en
+ * Propiedades del script. Los usuarios se reparten entre las UAD activas.
+ */
+function crearUsuariosPruebaCarga(cantidad) {
+  ensureStructure_();
+  const total = Math.floor(Number(cantidad || 300));
+  if (total < 1 || total > 500) throw new Error("La cantidad debe estar entre 1 y 500 usuarios de prueba.");
+  const password = String(PropertiesService.getScriptProperties().getProperty("LOAD_TEST_PASSWORD") || "");
+  if (password.length < 12 || password.length > 128) throw new Error("Configure LOAD_TEST_PASSWORD con una contraseña temporal de 12 a 128 caracteres.");
+  const existingUsers = sheetObjects_(SHEETS.USERS);
+  const existingTests = existingUsers.filter(function (user) { return String(user.Id || "").indexOf(LOAD_TEST_USER_PREFIX) === 0; });
+  if (existingTests.length) throw new Error("Ya existen " + existingTests.length + " usuarios LOADTEST. Ejecute eliminarUsuariosPruebaCarga() antes de crear un lote nuevo.");
+  const occupiedCedulas = {};
+  existingUsers.forEach(function (user) { occupiedCedulas[cleanId_(user.Cedula)] = true; });
+  for (let reservedIndex = 1; reservedIndex <= total; reservedIndex += 1) {
+    if (occupiedCedulas[String(LOAD_TEST_CEDULA_BASE + reservedIndex)]) throw new Error("Una cédula reservada para la prueba ya está en uso. Elimine o corrija ese registro antes de continuar.");
+  }
+
+  const uads = catalogsApi_().uads;
+  if (!uads.length) throw new Error("No hay UAD activas para distribuir los usuarios de prueba.");
+  const headers = headersForSheet_(SHEETS.USERS);
+  const createdAt = new Date();
+  const rows = [];
+  for (let index = 1; index <= total; index += 1) {
+    const sequence = ("000" + index).slice(-3);
+    const salt = Utilities.getUuid();
+    const user = {
+      Id: LOAD_TEST_USER_PREFIX + sequence,
+      Nombre: "[PRUEBA CARGA] Usuario " + sequence,
+      Cedula: String(LOAD_TEST_CEDULA_BASE + index),
+      Telefono: "",
+      Correo: "loadtest" + sequence + "@pasaporte.invalid",
+      Cargo: "Prueba de carga",
+      UAD: uads[(index - 1) % uads.length],
+      Avatar: "avatar:v2:2:0:1:0:",
+      Rol: "USER",
+      PasswordSalt: salt,
+      PasswordHash: hashPassword_(password, salt),
+      Activo: true,
+      CreadoEn: createdAt,
+      SessionVersion: "1",
+    };
+    rows.push(headers.map(function (header) { return user[header] === undefined ? "" : user[header]; }));
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error("No fue posible reservar la hoja para crear el lote de prueba.");
+  try {
+    const latestUsers = sheetObjects_(SHEETS.USERS);
+    if (latestUsers.some(function (user) { return String(user.Id || "").indexOf(LOAD_TEST_USER_PREFIX) === 0; })) {
+      throw new Error("Otro proceso ya creó usuarios LOADTEST. No se agregó un lote duplicado.");
+    }
+    const latestCedulas = {};
+    latestUsers.forEach(function (user) { latestCedulas[cleanId_(user.Cedula)] = true; });
+    for (let latestIndex = 1; latestIndex <= total; latestIndex += 1) {
+      if (latestCedulas[String(LOAD_TEST_CEDULA_BASE + latestIndex)]) throw new Error("Una cédula reservada para la prueba fue ocupada mientras se preparaba el lote.");
+    }
+    const sheet = getSheet_(SHEETS.USERS);
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, headers.length).setValues(rows);
+    SpreadsheetApp.flush();
+  } finally { lock.releaseLock(); }
+  invalidateLoadTestCaches_();
+  return JSON.stringify({
+    creados: total,
+    primeraCedula: String(LOAD_TEST_CEDULA_BASE + 1),
+    ultimaCedula: String(LOAD_TEST_CEDULA_BASE + total),
+    uads: uads,
+    siguientePaso: "Ejecute prepararEvento300Usuarios() y después el script load-tests/run.mjs.",
+  });
+}
+
+/**
+ * Elimina exclusivamente usuarios con Id LOADTEST- y sus datos dependientes.
+ * Las evidencias creadas por esas cuentas también se envían a la papelera.
+ */
+function eliminarUsuariosPruebaCarga() {
+  ensureStructure_();
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error("No fue posible reservar la hoja para limpiar la prueba de carga.");
+  try {
+    const testUsers = sheetObjects_(SHEETS.USERS).filter(function (user) { return String(user.Id || "").indexOf(LOAD_TEST_USER_PREFIX) === 0; });
+    if (!testUsers.length) {
+      PropertiesService.getScriptProperties().deleteProperty("LOAD_TEST_PASSWORD");
+      return JSON.stringify({ eliminados: 0, mensaje: "No había usuarios LOADTEST.", passwordTemporalEliminada: true });
+    }
+    const ids = {};
+    testUsers.forEach(function (user) { ids[String(user.Id)] = true; });
+
+    const evidence = sheetObjects_(SHEETS.EVIDENCE).filter(function (row) { return ids[String(row.UsuarioId)]; });
+    evidence.forEach(function (row) {
+      if (!row.ArchivoId) return;
+      try { DriveApp.getFileById(String(row.ArchivoId)).setTrashed(true); } catch (error) { /* El archivo ya no existe o no pertenece a esta cuenta. */ }
+    });
+
+    const removed = {
+      progreso: deleteRowsForLoadUsers_(SHEETS.PROGRESS, ids),
+      bonus: deleteRowsForLoadUsers_(SHEETS.BONUS, ids),
+      evidencias: deleteRowsForLoadUsers_(SHEETS.EVIDENCE, ids),
+      recuperaciones: deleteRowsForLoadUsers_(SHEETS.RECOVERY, ids),
+      sesiones: deleteRowsForLoadUsers_(SHEETS.SESSIONS, ids),
+      usuarios: deleteRowsForLoadUsers_(SHEETS.USERS, ids, "Id"),
+    };
+    SpreadsheetApp.flush();
+    invalidateLoadTestCaches_();
+    PropertiesService.getScriptProperties().deleteProperty("LOAD_TEST_PASSWORD");
+    return JSON.stringify({ eliminados: testUsers.length, registros: removed, passwordTemporalEliminada: true });
+  } finally { lock.releaseLock(); }
+}
+
+function deleteRowsForLoadUsers_(sheetName, ids, field) {
+  const key = field || "UsuarioId";
+  const sheet = getSheet_(sheetName);
+  const rows = sheetObjects_(sheetName).filter(function (row) { return ids[String(row[key])]; }).map(function (row) { return Number(row._row); }).sort(function (a, b) { return b - a; });
+  let removed = 0;
+  for (let index = 0; index < rows.length;) {
+    const end = rows[index];
+    let start = end;
+    index += 1;
+    while (index < rows.length && rows[index] === start - 1) { start = rows[index]; index += 1; }
+    sheet.deleteRows(start, end - start + 1);
+    removed += end - start + 1;
+  }
+  return removed;
+}
+
+function invalidateLoadTestCaches_() {
+  const cache = CacheService.getScriptCache();
+  const keys = [CACHE_KEYS.USERS_WARM, CACHE_KEYS.ADMIN_DASHBOARD, CACHE_KEYS.BONUS_LEADERBOARD, CACHE_KEYS.EVENT_WARM_UNTIL];
+  for (let shard = 0; shard < ACTIVITY_SNAPSHOT_SHARDS; shard += 1) {
+    keys.push(CACHE_KEYS.PROGRESS_SNAPSHOT + shard, CACHE_KEYS.BONUS_SNAPSHOT + shard);
+  }
+  cache.removeAll(keys);
 }
 
 function warmActivitySnapshots_() {

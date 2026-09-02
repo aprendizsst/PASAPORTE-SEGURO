@@ -4,7 +4,7 @@ Esta guía separa la comprobación funcional del ensayo de capacidad. Las prueba
 
 ## Antes del evento
 
-1. Publique la revisión 3.2.25 del frontend y una **nueva versión** de la implementación de Apps Script.
+1. Publique la revisión 3.2.26 del frontend y una **nueva versión** de la implementación de Apps Script.
 2. Ejecute una vez `setupPasaporteSeguro()` y confirme que finaliza sin error.
 3. Verifique que los 300 usuarios estén creados antes del ingreso masivo. Evite registrar 300 cuentas durante el evento.
 4. Entre 1 y 5 minutos antes de abrir el acceso, ejecute `prepararEvento300Usuarios()`. Continúe únicamente si responde **Preparación completa**.
@@ -41,4 +41,32 @@ npm test
 npm run build
 ```
 
-El resultado esperado es 14 pruebas aprobadas y una compilación de producción sin errores.
+El resultado esperado es 15 pruebas aprobadas y una compilación de producción sin errores.
+
+## Prueba automatizada con usuarios temporales
+
+1. En **Configuración del proyecto → Propiedades del script**, cree `LOAD_TEST_PASSWORD` con una contraseña temporal de al menos 12 caracteres.
+2. En el editor de Apps Script seleccione `crearUsuariosPruebaCarga` y ejecútela una vez. Sin parámetros crea 300 cuentas y debe informar las cédulas `990000000001` a `990000000300`.
+3. Ejecute `prepararEvento300Usuarios()` inmediatamente antes de iniciar el ensayo.
+4. Desde PowerShell, en la carpeta del proyecto, configure las variables sin escribir la contraseña en archivos:
+
+```powershell
+$env:PASAPORTE_API_URL="PEGUE_AQUI_LA_URL_EXEC"
+$env:PASAPORTE_LOAD_PASSWORD="LA_MISMA_CONTRASEÑA_TEMPORAL"
+$env:PASAPORTE_LOAD_STAGES="5,25,50,100,200,300"
+$env:PASAPORTE_LOAD_WRITE="false"
+npm run test:load
+```
+
+El modo anterior valida login, restauración de sesión y asignación de misiones. Para incluir escrituras use una misión activa, asignada a todas las UAD y que **no requiera evidencia**:
+
+```powershell
+$env:PASAPORTE_LOAD_WRITE="true"
+$env:PASAPORTE_LOAD_MISSION_ID="ID_DE_LA_MISION"
+$env:PASAPORTE_LOAD_MISSION_CODE="CODIGO_DE_SELLO"
+npm run test:load
+```
+
+El ejecutor también guarda un resultado JSON en `load-tests/results/`. Si login, sesión o misiones bajan de 99 %, termina con código de error.
+
+Al finalizar, ejecute obligatoriamente `eliminarUsuariosPruebaCarga()` desde Apps Script. Esta función elimina solo las cuentas cuyo identificador interno comienza por `LOADTEST-`, sus datos dependientes y la propiedad `LOAD_TEST_PASSWORD`. Cierre también la terminal o retire sus variables temporales con `Remove-Item Env:PASAPORTE_LOAD_PASSWORD, Env:PASAPORTE_LOAD_MISSION_CODE`.

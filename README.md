@@ -103,6 +103,10 @@ npm run dev
 
 Sin una URL válida en `public/config.js`, la aplicación bloquea el inicio de sesión. Configure primero la implementación pública de Apps Script terminada en `/exec`.
 
+## Prueba de carga
+
+La revisión 3.2.26 incluye cuentas temporales y un ejecutor para probar hasta 300 sesiones contra la implementación real sin emplear datos de colaboradores. Consulte `VALIDACION-300-DISPOSITIVOS.md`; la contraseña se configura únicamente mediante `LOAD_TEST_PASSWORD` en las propiedades privadas de Apps Script y una variable temporal de PowerShell.
+
 ## Activar o desactivar mejoras visuales
 
 `public/config.js` incluye interruptores que permiten apagar una mejora sin borrar código:

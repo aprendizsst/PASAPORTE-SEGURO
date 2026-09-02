@@ -407,3 +407,17 @@ test('la conexión de Apps Script solo puede provenir de la configuración publi
   assert.match(main, /configScript\.onload = renderApp/);
   assert.doesNotMatch(html, /<script[^>]+config\.js/);
 });
+
+test('usuarios de carga están aislados, se crean en lote y tienen limpieza acotada', () => {
+  const source = fs.readFileSync(path.join(root, 'apps-script/Code.gs'), 'utf8');
+  const runner = fs.readFileSync(path.join(root, 'load-tests/run.mjs'), 'utf8');
+  assert.match(source, /const LOAD_TEST_USER_PREFIX = "LOADTEST-"/);
+  assert.match(source, /function crearUsuariosPruebaCarga\(cantidad\)/);
+  assert.match(source, /setValues\(rows\)/);
+  assert.match(source, /function eliminarUsuariosPruebaCarga\(\)/);
+  assert.match(source, /deleteProperty\("LOAD_TEST_PASSWORD"\)/);
+  assert.doesNotMatch(source, /LOAD_TEST_PASSWORD\s*=\s*["'][^"']+["']/);
+  assert.match(runner, /PASAPORTE_LOAD_STAGES/);
+  assert.match(runner, /990000000000 \+ index/);
+  assert.match(runner, /successRate < 99/);
+});

@@ -1,5 +1,12 @@
 # Actualización segura a Pasaporte Seguro 3.2
 
+## Revisión 3.2.26 — Ensayo masivo controlado
+
+- Añade `crearUsuariosPruebaCarga(cantidad)` para generar hasta 500 cuentas temporales distribuidas entre las UAD, sin usar datos personales ni guardar la contraseña en el código.
+- Añade `eliminarUsuariosPruebaCarga()` para retirar únicamente registros identificados con el prefijo interno `LOADTEST-`, junto con su progreso, Bonus, sesiones, recuperaciones y evidencias.
+- Incorpora `npm run test:load`, que ejecuta las etapas 5, 25, 50, 100, 200 y 300 contra la implementación real y genera métricas p50, p95, p99, reintentos y errores por operación.
+- El modo de escritura es optativo. Permite ensayar inicio de misión, sellado y Bonus únicamente con las cuentas temporales; al terminar debe ejecutarse la limpieza desde Apps Script.
+
 ## Revisión 3.2.25 — Carga confiable de Apps Script
 
 - `config.js` se solicita antes de montar React y con un identificador variable para impedir que GitHub Pages, el navegador o un proxy reutilicen una copia anterior con `apiUrl` vacío.
