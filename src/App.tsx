@@ -94,7 +94,7 @@ const demoBonusLeaderboard: BonusLeaderboardEntry[] = [
 ];
 
 declare global {
-  interface Window { PASSPORT_CONFIG?: { apiUrl?: string; features?: Record<string, boolean> }; PASSPORT_CONFIG_LOAD_ERROR?: boolean }
+  interface Window { PASSPORT_CONFIG?: { apiUrl?: string; provider?: "apps-script" | "firebase"; features?: Record<string, boolean> }; PASSPORT_CONFIG_LOAD_ERROR?: boolean }
 }
 
 function normalizeAppsScriptUrl(value: string) {
@@ -119,8 +119,12 @@ function apiConfigurationIssue() {
   const url = getApiUrl();
   if (!url) return window.PASSPORT_CONFIG_LOAD_ERROR
     ? "No fue posible cargar config.js. Publica nuevamente todos los archivos del frontend."
-    : "config.js no contiene la URL de Apps Script. Contacta al administrador.";
-  if (!/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/i.test(url)) return "La URL configurada no es una implementación pública de Apps Script terminada en /exec.";
+    : "config.js no contiene la URL del servicio de datos. Contacta al administrador.";
+  const provider = window.PASSPORT_CONFIG?.provider || "apps-script";
+  const validAppsScript = /^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/i.test(url);
+  const validFirebase = /^https:\/\/[a-z0-9.-]+\.(?:cloudfunctions\.net|run\.app)(?:\/[^\s]*)?$/i.test(url);
+  if (provider === "firebase" && !validFirebase) return "La URL configurada no corresponde al backend seguro de Firebase.";
+  if (provider !== "firebase" && !validAppsScript) return "La URL configurada no es una implementación pública de Apps Script terminada en /exec.";
   return "";
 }
 
@@ -150,6 +154,8 @@ function apiPolicy(action: string, payload?: Record<string, unknown>) {
   if (action === "session") return { attempts: 4, timeoutMs: 20000 };
   if (action === "register") return { attempts: 3, timeoutMs: 30000 };
   if (action === "requestPasswordReset" || action === "verifyPasswordResetCode") return { attempts: 2, timeoutMs: 20000 };
+  if (action === "adminReportData") return { attempts: 2, timeoutMs: 60000 };
+  if (action === "adminEvidenceData") return { attempts: 2, timeoutMs: 45000 };
   if (action === "completeMission" && payload?.evidence) return { attempts: 2, timeoutMs: 45000 };
   if (WRITE_API_ACTIONS.has(action)) return { attempts: 4, timeoutMs: 20000 };
   return { attempts: 2, timeoutMs: 10000 };
@@ -157,8 +163,9 @@ function apiPolicy(action: string, payload?: Record<string, unknown>) {
 
 function apiUrlOrThrow() {
   const url = getApiUrl();
-  if (!url) throw new Error("El Pasaporte Seguro no tiene configurada la conexión con Apps Script.");
-  if (/TU[_ -]?IMPLEMENTACION|TU[_ -]?ID/i.test(url) || !/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/i.test(url)) throw new Error("La conexión debe usar la URL pública completa de Apps Script terminada en /exec.");
+  if (!url) throw new Error("El Pasaporte Seguro no tiene configurada la conexión de datos.");
+  const issue = apiConfigurationIssue();
+  if (/TU[_ -]?IMPLEMENTACION|TU[_ -]?ID/i.test(url) || issue) throw new Error(issue || "La conexión de datos no es válida.");
   return url;
 }
 
@@ -197,7 +204,7 @@ async function callApi(action: string, payload: Record<string, unknown> = {}) {
         let result: { ok?: boolean; message?: string; data?: unknown };
         try { result = JSON.parse(responseText); }
         catch {
-          const error = new Error("Apps Script no devolvió una respuesta válida. Verifica que la implementación sea pública y termine en /exec.") as Error & { retryable?: boolean };
+          const error = new Error("El servicio de datos no devolvió una respuesta válida. Verifica la URL publicada del backend.") as Error & { retryable?: boolean };
           // Google puede responder con una página temporal de cuota antes de que
           // Code.gs alcance a generar JSON. Solo esos mensajes se reintentan.
           error.retryable = /too many|exceeded|quota|temporar|service unavailable|try again|intenta de nuevo/i.test(responseText);
@@ -222,7 +229,7 @@ async function callApi(action: string, payload: Record<string, unknown> = {}) {
       }
     }
     if (lastError instanceof DOMException && lastError.name === "AbortError") throw new Error("La conexión tardó más de lo esperado. Intenta nuevamente.");
-    if (lastError instanceof TypeError) throw new Error("No fue posible conectar con Apps Script. Revisa la URL /exec y que el acceso sea para cualquier persona.");
+    if (lastError instanceof TypeError) throw new Error("No fue posible conectar con el servicio de datos. Revisa la URL publicada y sus permisos de acceso.");
     throw lastError instanceof Error ? lastError : new Error("No fue posible conectar con el pasaporte.");
   };
 
@@ -346,7 +353,7 @@ export default function Home() {
   const [catalogs, setCatalogs] = useState({ cargos, uads });
   const [sessionToken, setSessionToken] = useState("");
   const [historyDates, setHistoryDates] = useState<Record<number, string>>({});
-  const [adminPeople, setAdminPeople] = useState(demoPeople);
+  const [adminPeople, setAdminPeople] = useState<PersonProgress[]>(demoPeople);
   const [adminEvidence, setAdminEvidence] = useState<AdminEvidence[]>([]);
   const [adminBonusRecords, setAdminBonusRecords] = useState<AdminBonusRecord[]>([]);
   const [badgeDefinitions, setBadgeDefinitions] = useState<BadgeDefinition[]>([]);
@@ -783,6 +790,54 @@ export default function Home() {
     } catch (error) { notify(error instanceof Error ? error.message : "No fue posible actualizar el tablero."); }
     finally { setBusyAction(""); }
   }
+  async function downloadAdminReport() {
+    if (busyAction || !user || user.role !== "ADMIN") return;
+    setBusyAction("admin-report");
+    try {
+      const fallback = {
+        generatedAt: new Date().toISOString(),
+        summary: [
+          { Indicador: "Colaboradores activos", Valor: adminPeople.length },
+          { Indicador: "Misiones activas", Valor: missions.length },
+          { Indicador: "Misiones completadas", Valor: adminPeople.reduce((sum, person) => sum + person.completed, 0) },
+          { Indicador: "Puntos entregados", Valor: adminPeople.reduce((sum, person) => sum + person.points, 0) },
+          { Indicador: "Registros de minijuegos", Valor: adminBonusRecords.length },
+          { Indicador: "Evidencias recientes", Valor: adminEvidence.length },
+        ],
+        users: adminPeople.map((person) => ({ Nombre: person.name, Cedula: person.cedula, Telefono: person.phone || "", Correo: person.email, Cargo: person.cargo || "", UAD: person.uad, MisionesCompletadas: person.completed, MisionesDisponibles: person.total, AvancePorcentaje: person.total ? Math.round(person.completed / person.total * 100) : 0, Puntos: person.points, CreadoEn: person.createdAt || "" })),
+        missions: missions.map((mission) => ({ Id: mission.id, Estacion: mission.station, Mision: mission.title, Descripcion: mission.description, Audiencia: mission.audience, Duracion: mission.duration, Puntos: mission.points, EvidenciaObligatoria: Boolean(mission.evidenceRequired) })),
+        badges: badgeDefinitions.map((badge) => ({ Insignia: badge.title, Descripcion: badge.description, Criterio: badge.criterion, Meta: badge.goal, Estacion: badge.station || "", Orden: badge.order || 100 })),
+        bonus: adminBonusRecords.map((record) => ({ Colaborador: record.userName, UAD: record.uad, Juego: record.gameName, Puntos: record.score, Record: record.record, Fecha: record.completedAt })),
+        evidence: adminEvidence.map((item) => ({ Colaborador: item.userName, Mision: item.missionTitle, Archivo: item.fileName, Tipo: item.mime, TamanoBytes: item.size, Estado: item.status, Fecha: item.createdAt, URL: item.url })),
+      };
+      const report = getApiUrl() ? await callApi("adminReportData", { token: sessionToken }) : fallback;
+      const { downloadAdminWorkbook } = await import("./adminReport");
+      await downloadAdminWorkbook(report as Parameters<typeof downloadAdminWorkbook>[0]);
+      notify("Informe de rendimiento descargado en Excel.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "No fue posible generar el informe de Excel.");
+    } finally { setBusyAction(""); }
+  }
+  async function openAdminEvidence(item: AdminEvidence) {
+    const preview = window.open("", "_blank");
+    if (!preview) { notify("El navegador bloqueó la ventana de evidencia. Habilita las ventanas emergentes e intenta de nuevo."); return; }
+    preview.opener = null;
+    preview.document.title = "Cargando evidencia…";
+    preview.document.body.textContent = "Preparando evidencia segura…";
+    try {
+      if (/^https:\/\//i.test(item.url || "")) { preview.location.href = item.url; return; }
+      const result = await callApi("adminEvidenceData", { token: sessionToken, evidenceId: item.id }) as { url?: string; data?: string; mime?: string };
+      if (result.url) { preview.location.href = result.url; return; }
+      if (!result.data) throw new Error("La evidencia no contiene datos disponibles.");
+      const decoded = atob(result.data); const bytes = new Uint8Array(decoded.length);
+      for (let index = 0; index < decoded.length; index += 1) bytes[index] = decoded.charCodeAt(index);
+      const objectUrl = URL.createObjectURL(new Blob([bytes], { type: result.mime || item.mime || "application/octet-stream" }));
+      preview.location.href = objectUrl;
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+    } catch (error) {
+      preview.close(); notify(error instanceof Error ? error.message : "No fue posible abrir la evidencia.");
+    }
+  }
   async function saveAvatar() {
     if (busyAction) return;
     if (avatarPurpose === "register") {
@@ -906,7 +961,7 @@ export default function Home() {
         {view === "history" && <div className="page-content history-page"><div className="section-heading"><div><p className="step-label">BITÁCORA PERSONAL</p><h2>Historial de misiones</h2><p>Todos los sellos y experiencias que has coleccionado.</p></div><div className="passport-number">PASAPORTE Nº <b>{user.cedula.slice(-6).padStart(6, "0")}</b></div></div><div className="history-list">{completedHistory.length ? completedHistory.map((m, i) => <article className="history-item" key={m.id}><span className="history-icon" style={{ background: m.color }}><StationIcon station={m.station} /></span><div><small>{m.station}</small><h3>{m.title}</h3><p>Completada el {historyDates[m.id] ? new Date(historyDates[m.id]).toLocaleDateString("es-CO", { day: "numeric", month: "long", year: "numeric" }) : `${i === 0 ? "10" : "11"} de agosto de 2026`} · {m.duration}</p></div><div className="history-points">+{m.points}<small>puntos</small></div><span className="mini-stamp">SELLADA</span></article>) : <div className="empty-state"><span><UiIcon name="compass" /></span><h3>Tu bitácora está lista</h3><p>Completa tu primera misión para estrenar esta página.</p><button className="primary-button" onClick={() => turnTo("missions")}>Explorar misiones</button></div>}</div></div>}
 
         {view === "complete" && <div className="page-content complete-page"><div className="confetti-field" aria-hidden="true">✦　●　◆　✦　●　◆　✦</div><div className="completion-seal"><span>✓</span><b>PASAPORTE<br />COMPLETO</b><small>FESTIVAL 2026</small></div><p className="step-label">MISIÓN CUMPLIDA</p><h2>¡Completaste tu Pasaporte Seguro!</h2><p className="completion-copy">Recorriste todas las estaciones y demostraste que la diversidad, la felicidad, la seguridad, la salud y el cuidado se construyen entre todos.</p><div className="completion-name"><small>OTORGADO A</small><b>{user.name}</b><span>{user.uad} · {points} puntos · {unlockedBadges} insignias</span></div><div className="completion-actions"><button className="secondary-button" onClick={() => turnTo("history")}>Ver mi historial</button>{featureEnabled("badges") && <button className="secondary-button" onClick={() => turnTo("badges")}>Ver insignias</button>}</div>{featureEnabled("downloadableCard") && <FinalPassportCard name={user.name} uad={user.uad} cedula={user.cedula} avatar={user.avatar} points={points} missions={visibleMissions} completed={completed} badges={badges} onNotice={notify} />}</div>}
-        {view === "admin" && user.role === "ADMIN" && <AdminPage missions={missions} people={adminPeople} evidence={adminEvidence} records={adminBonusRecords} badges={badgeDefinitions} uadOptions={catalogs.uads} busyAction={busyAction} onCreate={createAdminMission} onEdit={editAdminMission} onDelete={deleteAdminMission} onCreateBadge={createAdminBadge} onEditBadge={editAdminBadge} onDeleteBadge={deleteAdminBadge} onEditUser={editAdminUser} onDeleteUser={deleteAdminUser} onCreateRecoveryCode={createAdminRecoveryCode} onManageRecord={manageAdminBonusRecord} onRefresh={refreshAdminDashboard} />}
+        {view === "admin" && user.role === "ADMIN" && <AdminPage missions={missions} people={adminPeople} evidence={adminEvidence} records={adminBonusRecords} badges={badgeDefinitions} uadOptions={catalogs.uads} busyAction={busyAction} onCreate={createAdminMission} onEdit={editAdminMission} onDelete={deleteAdminMission} onCreateBadge={createAdminBadge} onEditBadge={editAdminBadge} onDeleteBadge={deleteAdminBadge} onEditUser={editAdminUser} onDeleteUser={deleteAdminUser} onCreateRecoveryCode={createAdminRecoveryCode} onManageRecord={manageAdminBonusRecord} onOpenEvidence={openAdminEvidence} onRefresh={refreshAdminDashboard} onDownloadReport={downloadAdminReport} />}
         </div>
       </div>
     </section>}
@@ -983,7 +1038,7 @@ function Tab({ label, icon, active, onClick }: { label: string; icon: string; ac
 function StatCard({ icon, label, value, color }: { icon: string; label: string; value: string; color: string }) { return <article className="stat-card"><span style={{ background: color }}><UiIcon name={icon} /></span><div><b>{value}</b><small>{label}</small></div></article>; }
 function GuideStep({ number, icon, title, text, color }: { number: string; icon: string; title: string; text: string; color: string }) { return <article className="guide-step"><span className="guide-number">{number}</span><div className="guide-icon" style={{ background: color }}><UiIcon name={icon} /></div><h3>{title}</h3><p>{text}</p></article>; }
 
-function AdminPage({ missions, people, evidence, records, badges, uadOptions: catalogUads, busyAction, onCreate, onEdit, onDelete, onCreateBadge, onEditBadge, onDeleteBadge, onEditUser, onDeleteUser, onCreateRecoveryCode, onManageRecord, onRefresh }: {
+function AdminPage({ missions, people, evidence, records, badges, uadOptions: catalogUads, busyAction, onCreate, onEdit, onDelete, onCreateBadge, onEditBadge, onDeleteBadge, onEditUser, onDeleteUser, onCreateRecoveryCode, onManageRecord, onOpenEvidence, onRefresh, onDownloadReport }: {
   missions: Mission[];
   people: PersonProgress[];
   evidence: AdminEvidence[];
@@ -1001,7 +1056,9 @@ function AdminPage({ missions, people, evidence, records, badges, uadOptions: ca
   onDeleteUser: (person: PersonProgress) => Promise<boolean>;
   onCreateRecoveryCode: (person: PersonProgress) => Promise<string>;
   onManageRecord: (recordId: string, mode: "reset" | "delete" | "resetAll") => Promise<boolean>;
+  onOpenEvidence: (item: AdminEvidence) => Promise<void>;
   onRefresh: () => Promise<void>;
+  onDownloadReport: () => Promise<void>;
 }) {
   const [tab, setTab] = useState<"overview" | "missions" | "badges" | "users" | "records" | "evidence">("overview");
   const [audience, setAudience] = useState("Todas las UAD");
@@ -1108,15 +1165,6 @@ function AdminPage({ missions, people, evidence, records, badges, uadOptions: ca
     if (await onEditUser(updated)) setUserEditTarget(null);
   }
 
-  function downloadReport() {
-    const escape = (value: string | number) => `"${String(value).replace(/"/g, '""')}"`;
-    const rows = [["Colaborador", "UAD", "Misiones completadas", "Misiones disponibles", "Avance", "Puntos"], ...people.map((person) => [person.name, person.uad, person.completed, person.total, `${person.total ? Math.round((person.completed / person.total) * 100) : 0}%`, person.points])];
-    const csv = `\uFEFF${rows.map((row) => row.map(escape).join(";")).join("\n")}`;
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a"); link.href = url; link.download = "progreso-pasaporte-seguro.csv";
-    document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-
   return <div className="page-content admin-page">
     <div className="admin-title"><div><p className="step-label">CENTRO DE CONTROL</p><h2>Administración del festival</h2><p>Gestiona misiones y acompaña el avance de los colaboradores.</p></div><div className="admin-title-actions"><button className="secondary-button" onClick={onRefresh} disabled={Boolean(busyAction)}>{busyAction === "admin-refresh" ? "Actualizando…" : "Actualizar datos ↻"}</button><div className="admin-badge"><UiIcon name="settings" /> Modo administrador</div></div></div>
     <div className="admin-tabs"><button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>Resumen</button><button className={tab === "missions" ? "active" : ""} onClick={() => setTab("missions")}>Misiones <span>{missions.length}</span></button><button className={tab === "badges" ? "active" : ""} onClick={() => setTab("badges")}>Insignias <span>{badges.length}</span></button><button className={tab === "users" ? "active" : ""} onClick={() => setTab("users")}>Usuarios <span>{people.length}</span></button><button className={tab === "records" ? "active" : ""} onClick={() => setTab("records")}>Récords <span>{records.length}</span></button><button className={tab === "evidence" ? "active" : ""} onClick={() => setTab("evidence")}>Evidencias <span>{evidence.length}</span></button></div>
@@ -1124,7 +1172,7 @@ function AdminPage({ missions, people, evidence, records, badges, uadOptions: ca
     {tab === "overview" ? <>
       <div className="admin-stats"><StatCard icon="users" label="Colaboradores" value={String(people.length)} color="#9d5cff" /><StatCard icon="check" label="Misiones completadas" value={String(totalCompleted)} color="#12cfe0" /><StatCard icon="trend" label="Avance promedio" value={`${average}%`} color="#43d17d" /><StatCard icon="sparkle" label="Puntos entregados" value={totalPoints >= 1000 ? `${(totalPoints / 1000).toFixed(1)}K` : String(totalPoints)} color="#ffb703" /></div>
       {leader && <div className="leader-card"><span className="leader-avatar"><UiIcon name="trophy" /></span><div><p className="step-label">LÍDER DEL RECORRIDO</p><h3>{leader.name}</h3><p>{leader.uad} · {leader.completed} misiones completadas</p></div><b>{leader.points}<small>puntos</small></b></div>}
-      <div className="people-table"><div className="table-title"><h3>Progreso de colaboradores</h3><div className="table-actions"><button onClick={onRefresh} disabled={busyAction === "admin-refresh"}>{busyAction === "admin-refresh" ? "Actualizando..." : "Actualizar ↻"}</button><button onClick={downloadReport}>Descargar CSV ↓</button></div></div><div className="table-head"><span>Colaborador</span><span>UAD</span><span>Progreso</span><span>Puntos</span></div>{overviewPage.items.map((p) => { const pct = p.total ? Math.round((p.completed / p.total) * 100) : 0; return <div className="table-row" key={p.id}><span><i>{p.name.charAt(0)}</i><b>{p.name}</b></span><span>{p.uad}</span><span><div className="mini-progress"><i style={{ width: `${pct}%` }} /></div><b>{pct}%</b></span><span className="point-value">{p.points}</span></div>; })}</div><AdminPagination label="progreso" {...overviewPage} />
+      <div className="people-table"><div className="table-title"><h3>Progreso de colaboradores</h3><div className="table-actions"><button onClick={onRefresh} disabled={busyAction === "admin-refresh"}>{busyAction === "admin-refresh" ? "Actualizando..." : "Actualizar ↻"}</button><button onClick={onDownloadReport} disabled={Boolean(busyAction)}>{busyAction === "admin-report" ? "Generando…" : "Descargar Excel ↓"}</button></div></div><div className="table-head"><span>Colaborador</span><span>UAD</span><span>Progreso</span><span>Puntos</span></div>{overviewPage.items.map((p) => { const pct = p.total ? Math.round((p.completed / p.total) * 100) : 0; return <div className="table-row" key={p.id}><span><i>{p.name.charAt(0)}</i><b>{p.name}</b></span><span>{p.uad}</span><span><div className="mini-progress"><i style={{ width: `${pct}%` }} /></div><b>{pct}%</b></span><span className="point-value">{p.points}</span></div>; })}</div><AdminPagination label="progreso" {...overviewPage} />
     </> : tab === "missions" ? <div className="mission-admin-grid">
       <form className="create-mission-card" onSubmit={createMission}><p className="step-label">NUEVA ACTIVIDAD</p><h3>Crear una misión</h3><label>Nombre de la misión<input name="title" maxLength={120} placeholder="Ej. Ruta de la confianza" required /></label><label>Estación<select name="station">{stations.map((s) => <option key={s.name}>{s.name}</option>)}</select></label><label>Descripción<textarea name="description" maxLength={700} placeholder="Explica en qué consiste el reto..." required /></label><div className="field-row"><label>Duración<input name="duration" maxLength={30} placeholder="8 min" /></label><label>Puntos<input name="points" type="number" defaultValue="100" min="10" max="1000" required /></label></div><label>¿A quién se asigna?<select value={audience === "Todas las UAD" ? "all" : "uad"} onChange={(e) => setAudience(e.target.value === "all" ? "Todas las UAD" : (uadOptions[0] || ""))}><option value="all">A todas las UAD</option><option value="uad" disabled={!uadOptions.length}>A una UAD específica</option></select></label>{audience !== "Todas las UAD" && <label>UAD asignada<select required value={audience} onChange={(e) => setAudience(e.target.value)}>{uadOptions.map((uad) => <option key={uad}>{uad}</option>)}</select></label>}<p className={`assignment-note ${recipientCount(audience) ? "" : "warning"}`}>{recipientCount(audience)} colaboradores registrados recibirán esta misión.{!recipientCount(audience) && " No hay colaboradores registrados en esta UAD; revisa la selección."}</p><label className="toggle-field"><input type="checkbox" name="evidenceRequired" /><span><b>Exigir evidencia</b><small>Foto o video para sellar</small></span></label><div className="generated-code-note"><UiIcon name="key" /><span><b>Código automático</b><small>Se genera al publicar y solo lo ve el administrador.</small></span></div><button className="primary-button" type="submit" disabled={busyAction === "create-mission"}>{busyAction === "create-mission" ? <><LoadingDot /> Publicando...</> : <>Publicar misión <UiIcon name="arrow" /></>}</button></form>
       <div className="active-missions"><div className="section-heading"><div><p className="step-label">PUBLICADAS</p><h3>Misiones activas</h3></div><span>{missions.length}</span></div><div className="user-search"><input aria-label="Buscar misiones" value={missionSearch} onChange={(event) => setMissionSearch(event.target.value)} placeholder="Buscar por nombre, estación o UAD..." /></div>{missionsPage.items.map((m) => <article key={m.id}><span style={{ background: m.color }}><StationIcon station={m.station} /></span><div><b>{m.title}</b><small>{m.station} · {m.audience}</small><small className={recipientCount(m.audience) ? "assignment-count" : "assignment-count warning"}>{recipientCount(m.audience)} colaboradores asignados{!recipientCount(m.audience) && " · Revisa la UAD"}</small><code><UiIcon name="key" /> {m.sealCode || "Cargando…"}</code></div><div className="mission-admin-actions"><button aria-label={`Editar ${m.title}`} title="Editar misión" onClick={() => setEditTarget(m)}><UiIcon name="edit" /></button><button className="delete-mission" aria-label={`Eliminar ${m.title}`} title="Eliminar misión" onClick={() => setDeleteTarget(m)}><UiIcon name="trash" /></button></div></article>)}{!missionsPage.total && <p className="admin-list-empty">No hay misiones que coincidan con la búsqueda.</p>}<AdminPagination label="misiones" {...missionsPage} /></div>
@@ -1133,7 +1181,7 @@ function AdminPage({ missions, people, evidence, records, badges, uadOptions: ca
       <div className="admin-badge-list"><div className="section-heading"><div><p className="step-label">COLECCIÓN ACTIVA</p><h3>Insignias publicadas</h3></div><span>{badges.length}</span></div><div className="user-search"><input aria-label="Buscar insignias" value={badgeSearch} onChange={(event) => setBadgeSearch(event.target.value)} placeholder="Buscar insignias..." /></div>{badgesPage.items.map((badge) => <article key={badge.id}><span className="admin-medal-preview" style={{ "--badge-a": badge.primaryColor, "--badge-b": badge.secondaryColor } as React.CSSProperties}><BadgeIcon icon={badge.icon} /></span><div><b>{badge.title}</b><small>{badgeCriterionLabel(badge)} · meta {badge.goal}</small><i><span style={{ background: badge.primaryColor }} /><span style={{ background: badge.secondaryColor }} /></i></div><div className="mission-admin-actions"><button title="Editar insignia" onClick={() => setBadgeEditTarget(badge)}><UiIcon name="edit" /></button><button className="delete-mission" title="Retirar insignia" onClick={() => setBadgeDeleteTarget(badge)}><UiIcon name="trash" /></button></div></article>)}{!badgesPage.total && <p className="admin-list-empty">No hay insignias que coincidan con la búsqueda.</p>}<AdminPagination label="insignias" {...badgesPage} /></div>
     </div> : tab === "users" ? <div className="users-admin"><div className="section-heading"><div><p className="step-label">CONTROL DE ACCESO</p><h3>Usuarios registrados</h3><p>Busca, edita, recupera el acceso o elimina registros con errores.</p></div><button className="secondary-button" onClick={onRefresh}>Actualizar ↻</button></div><div className="user-search"><UiIcon name="users" /><input aria-label="Buscar usuarios" value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder="Buscar usuario..." /></div><div className="user-management-list">{usersPage.items.map((person) => <article key={person.id}><span>{person.name.charAt(0).toUpperCase()}</span><div><b>{person.name}</b><small>CC {person.cedula} · {person.uad}</small><i>{person.email}</i></div><div className="user-score"><b>{person.points}</b><small>puntos</small></div><div className="user-actions"><button title="Editar usuario" disabled={busyAction === `edit-user-${person.id}`} onClick={() => setUserEditTarget(person)}><UiIcon name="edit" /><span>Editar</span></button><button title="Generar código de respaldo" disabled={busyAction === `recovery-user-${person.id}`} onClick={() => void generateBackupCode(person)}><UiIcon name="key" /><span>Respaldo</span></button><button className="danger-outline" title="Eliminar usuario" disabled={busyAction === `delete-user-${person.id}`} onClick={() => setUserDeleteTarget(person)}><UiIcon name="trash" /><span>Eliminar</span></button></div></article>)}</div><AdminPagination label="usuarios" {...usersPage} />{!filteredPeople.length && <div className="empty-state"><span><UiIcon name="users" /></span><h3>No se encontraron usuarios</h3><p>Prueba con otro nombre, cédula o UAD.</p></div>}</div>
     : tab === "records" ? <div className="records-admin"><div className="section-heading"><div><p className="step-label">CONTROL DE PUNTUACIONES</p><h3>Récords de los minijuegos</h3><p>Reiniciar deja el récord en cero y conserva los puntos. Eliminar borra completamente el resultado del bonus.</p></div><button className="danger-outline-button" disabled={!records.length || busyAction === "records-reset-all"} onClick={() => setRecordAction({ mode: "resetAll" })}>{busyAction === "records-reset-all" ? "Restableciendo…" : "Restablecer todos"}</button></div><div className="user-search record-search"><UiIcon name="gamepad" /><input aria-label="Buscar récords" value={recordSearch} onChange={(event) => setRecordSearch(event.target.value)} placeholder="Buscar por colaborador, UAD o juego..." /></div>{filteredRecords.length ? <div className="record-management-list">{recordsPage.items.map((record) => <article key={record.id}><span className="record-game-icon" style={{ "--record-color": bonusRecordColor(record.gameId) } as React.CSSProperties}><UiIcon name="gamepad" /></span><div><b>{record.gameName}</b><small>{record.userName} · {record.uad || "Sin UAD"}</small><i>{record.completedAt ? new Date(record.completedAt).toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" }) : "Sin fecha"}</i></div><div className="record-values"><span><small>RÉCORD</small><b>{record.record}</b></span><span><small>PUNTOS</small><b>{record.score}</b></span></div><div className="record-actions"><button disabled={busyAction === `reset-record-${record.id}`} onClick={() => setRecordAction({ record, mode: "reset" })}>Reiniciar</button><button className="danger-outline" disabled={busyAction === `delete-record-${record.id}`} onClick={() => setRecordAction({ record, mode: "delete" })}><UiIcon name="trash" /> Eliminar</button></div></article>)}</div> : <div className="empty-state"><span><UiIcon name="gamepad" /></span><h3>No hay récords para mostrar</h3><p>Los resultados aparecerán aquí después de guardar una partida.</p></div>}<AdminPagination label="récords" {...recordsPage} /></div>
-    : <div className="evidence-admin"><div className="section-heading"><div><p className="step-label">VALIDACIÓN VISUAL</p><h3>Evidencias recientes</h3><p>Los archivos se consultan solo al abrir Administración.</p></div><button className="secondary-button" onClick={onRefresh}>Actualizar ↻</button></div>{evidence.length ? <div className="evidence-grid">{evidence.map((item) => <article key={item.id}><span className="evidence-type"><UiIcon name="camera" /></span><div><b>{item.userName}</b><small>{item.missionTitle}</small><p>{item.fileName} · {(item.size / 1024 / 1024).toFixed(1)} MB</p></div><a href={item.url} target="_blank" rel="noreferrer">Revisar ↗</a></article>)}</div> : <div className="empty-state"><span><UiIcon name="camera" /></span><h3>Aún no hay evidencias</h3><p>Las fotos y videos aparecerán aquí cuando los participantes validen sus misiones.</p></div>}</div>}
+    : <div className="evidence-admin"><div className="section-heading"><div><p className="step-label">VALIDACIÓN VISUAL</p><h3>Evidencias recientes</h3><p>Los archivos se consultan solo al abrir Administración.</p></div><button className="secondary-button" onClick={onRefresh}>Actualizar ↻</button></div>{evidence.length ? <div className="evidence-grid">{evidence.map((item) => <article key={item.id}><span className="evidence-type"><UiIcon name="camera" /></span><div><b>{item.userName}</b><small>{item.missionTitle}</small><p>{item.fileName} · {(item.size / 1024 / 1024).toFixed(1)} MB</p></div><a href={item.url || "#"} onClick={(event) => { event.preventDefault(); void onOpenEvidence(item); }}>Revisar ↗</a></article>)}</div> : <div className="empty-state"><span><UiIcon name="camera" /></span><h3>Aún no hay evidencias</h3><p>Las fotos y videos aparecerán aquí cuando los participantes validen sus misiones.</p></div>}</div>}
 
     {editTarget && <div className="admin-confirm-backdrop" role="dialog" aria-modal="true" aria-label="Editar misión"><form className="admin-edit-modal" onSubmit={editMission}><button className="close-button" type="button" onClick={() => setEditTarget(null)}>×</button><p className="step-label">EDITAR MISIÓN</p><h3>{editTarget.title}</h3><label>Nombre<input name="title" defaultValue={editTarget.title} maxLength={120} required /></label><label>Estación<select name="station" defaultValue={editTarget.station}>{stations.map((s) => <option key={s.name}>{s.name}</option>)}</select></label><label>Descripción<textarea name="description" defaultValue={editTarget.description} maxLength={700} required /></label><div className="field-row"><label>Duración<input name="duration" defaultValue={editTarget.duration} maxLength={30} /></label><label>Puntos<input name="points" type="number" defaultValue={editTarget.points} min="10" max="1000" required /></label></div><label>Audiencia<select name="audience" defaultValue={editTarget.audience}><option>Todas las UAD</option>{editTarget.audience !== "Todas las UAD" && !uadOptions.includes(editTarget.audience) && <option value={editTarget.audience}>{editTarget.audience} (asignación actual)</option>}{uadOptions.map((uad) => <option key={uad}>{uad}</option>)}</select></label><label className="toggle-field"><input type="checkbox" name="evidenceRequired" defaultChecked={editTarget.evidenceRequired} /><span><b>Exigir evidencia</b><small>Foto o video para completar</small></span></label><label className="toggle-field warning"><input type="checkbox" name="regenerateCode" /><span><b>Generar un código nuevo</b><small>El código anterior dejará de funcionar</small></span></label><button className="primary-button" type="submit" disabled={busyAction === `edit-${editTarget.id}`}>{busyAction === `edit-${editTarget.id}` ? <><LoadingDot /> Guardando...</> : <>Guardar cambios <UiIcon name="check" /></>}</button></form></div>}
 

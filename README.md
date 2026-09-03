@@ -1,6 +1,6 @@
 # Pasaporte Seguro · Festival 2026
 
-Versión completa de la aplicación web para GitHub Pages y Google Apps Script. Incluye:
+Versión 3.3.0 de la aplicación web para GitHub Pages. Incluye un backend escalable en Firebase/Firestore y conserva Apps Script como mecanismo de transición. La migración completa está en `MIGRACION-FIREBASE-v3.3.md`.
 
 - Portada tipo libro vibrante, optimizada para móviles y basada en la paleta roja, azul y rosa de los logos JER y **De mí para mí**.
 - Registro e inicio de sesión con cédula y contraseña.
@@ -17,7 +17,7 @@ Versión completa de la aplicación web para GitHub Pages y Google Apps Script. 
 - Diploma A4 moderno en PDF, sin avatar, con fondo editorial, marco corporativo multicapa, medalla de puntos, sellos dentados e insignias vectoriales; conserva logos y textos adaptables.
 - Sellado protegido por código único de misión y carga opcional u obligatoria de fotos o videos como evidencia.
 - Portada dinámica con profundidad, brillo, acentos institucionales y acceso compatible con mouse, teclado y pantallas táctiles.
-- Reporte administrativo CSV y actualización manual de estadísticas.
+- Reporte administrativo Excel con nueve hojas y actualización manual de estadísticas.
 - Diseño adaptable para computadores, tabletas y teléfonos.
 - Carga diferida de minijuegos, caché por usuario, restauración de sesión, reintentos progresivos e identificadores de operación para reducir cargas y duplicados.
 - Inicio de sesión con token firmado sin escritura por ingreso, caché preparada para eventos y restauración instantánea desde el dispositivo.
@@ -34,6 +34,8 @@ La eliminación administrativa desactiva la misión y conserva los registros his
 3. Suba **el contenido de la carpeta**, no el archivo ZIP y no una carpeta adicional, a la raíz del repositorio `PASAPORTE-SEGURO`.
 4. Deben quedar visibles en la raíz: `.github`, `apps-script`, `public`, `src`, `index.html`, `package.json`, `package-lock.json`, `tsconfig.json` y `vite.config.ts`.
 5. Conserve solamente `.github/workflows/deploy.yml`. Si existe otro archivo como `pages.yml`, elimínelo para evitar dos despliegues al mismo tiempo.
+
+> Para eliminar la contención observada en Apps Script con 200 usuarios, el despliegue recomendado desde esta versión es Firestore como base principal y Google Sheets como respaldo asíncrono. Siga `MIGRACION-FIREBASE-v3.3.md`; el proceso copia la base existente y no cambia la estética.
 
 ## 1. Preparar Google Sheets y Apps Script
 
@@ -105,7 +107,7 @@ Sin una URL válida en `public/config.js`, la aplicación bloquea el inicio de s
 
 ## Prueba de carga
 
-La revisión 3.2.26 incluye cuentas temporales y un ejecutor para probar hasta 300 sesiones contra la implementación real sin emplear datos de colaboradores. Consulte `VALIDACION-300-DISPOSITIVOS.md`; la contraseña se configura únicamente mediante `LOAD_TEST_PASSWORD` en las propiedades privadas de Apps Script y una variable temporal de PowerShell.
+La revisión 3.3.0 permite ejecutar el mismo ensayo contra Apps Script o Firebase. Para Firebase, las cuentas se crean y eliminan con `npm.cmd --prefix functions run load-users`; consulte `MIGRACION-FIREBASE-v3.3.md`. Para la plataforma anterior consulte `VALIDACION-300-DISPOSITIVOS.md`.
 
 ## Activar o desactivar mejoras visuales
 
@@ -124,6 +126,17 @@ Cambie únicamente `true` por `false` si necesita desactivar temporalmente una c
 
 ## Optimización y concurrencia
 
+- En el despliegue 3.3.0 recomendado, Firestore atiende login, sesión, misiones y juegos; Sheets recibe el respaldo después y nunca bloquea al participante.
+- La Function usa una instancia caliente, CPU completa, concurrencia limitada y escalado horizontal para absorber el pico sin acumular cientos de validaciones criptográficas en un solo proceso.
+- Las contraseñas se verifican de forma asíncrona. Un ingreso correcto no escribe contadores ni filas adicionales.
+- Las partidas escriben documentos independientes por usuario. El ranking se consulta con índice y caché breve, sin que 300 jugadores compitan por actualizar una misma fila o documento.
+- Misiones e insignias usan cachés de pocos segundos con invalidación administrativa; una asignación nueva se propaga normalmente en un máximo de cinco segundos.
+- Cada escritura usa un identificador idempotente. Si la red reenvía una solicitud, el backend comparte el resultado y no duplica sellos, puntos o evidencias.
+- La cola de respaldo se guarda dentro de la misma transacción de Firestore; si Sheets falla, la operación del usuario sigue confirmada y se reintenta por separado.
+- Las cuentas técnicas de carga se excluyen del panel, del Excel y de Sheets.
+
+Las medidas siguientes describen la compatibilidad temporal con el backend anterior de Apps Script:
+
 - `prepararEvento300Usuarios()` carga usuarios y snapshots fragmentados de progreso/Bonus mediante lecturas masivas antes de un pico de hasta 300 ingresos.
 - El login usa un token firmado y no agrega filas en `Sesiones`; editar, eliminar o restablecer la contraseña incrementa la versión de seguridad y revoca los tokens anteriores.
 - La estructura de las nueve hojas se valida durante `setupPasaporteSeguro`, no en cada clic del participante.
@@ -141,9 +154,9 @@ Cambie únicamente `true` por `false` si necesita desactivar temporalmente una c
 - Las actualizaciones de filas se realizan en bloque.
 - Los minijuegos cargan su código únicamente al abrir la pestaña Bonus.
 - Los tiempos de espera y reintentos son diferentes para login, lecturas y escrituras; usan retroceso exponencial con dispersión para no crear una segunda ráfaga.
-- La sincronización de asignaciones se reparte entre 2 y 3,5 minutos por equipo y no duplica la lectura incluida en el login.
+- La comprobación periódica del backend anterior se reparte entre 2 y 3,5 minutos para evitar ráfagas. Ese intervalo nunca fue el tiempo de sellado y no aplica al backend Firebase 3.3.0.
 
-Estas medidas reducen notablemente las consultas, pero Google Apps Script y Google Sheets conservan cuotas propias. Antes del evento se recomienda hacer una prueba de carga progresiva en una copia de la hoja y del despliegue, nunca directamente sobre los datos reales.
+Apps Script y Google Sheets conservan cuotas propias, por eso no deben seguir como ruta principal durante el evento. Antes de abrir el acceso ejecute la prueba progresiva de Firebase descrita en `MIGRACION-FIREBASE-v3.3.md`.
 
 ## Estructura de datos
 

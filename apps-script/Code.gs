@@ -58,7 +58,7 @@ const CACHE_TTL = {
 const WRITE_ACTIONS = ["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "verifyPasswordResetCode", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode", "adminManageBonusRecord"];
 
 function doGet() {
-  return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.2.26" } });
+  return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.3.0-compat" } });
 }
 
 function doPost(event) {
@@ -101,6 +101,7 @@ function doPost(event) {
     else if (action === "adminCreateRecoveryCode") data = adminCreateRecoveryCodeApi_(request);
     else if (action === "adminManageBonusRecord") data = adminManageBonusRecordApi_(request);
     else if (action === "adminDashboard") data = adminDashboardApi_(request);
+    else if (action === "adminReportData") data = adminReportDataApi_(request);
     else throw new Error("Acción no reconocida.");
 
     if (idempotencyKey) completeRequest_(idempotencyKey, data);
@@ -660,6 +661,125 @@ function adminDashboardApi_(request) {
     CacheService.getScriptCache().remove(CACHE_KEYS.CATALOGS);
   }
   return { people: buildAdminPeople_(), missions: activeMissions_().map(adminMission_), evidence: buildAdminEvidence_(), records: buildAdminBonusRecords_(), badges: activeBadges_(), uads: assignmentUads_() };
+}
+
+function adminReportDataApi_(request) {
+  requireAdmin_(request.token);
+  const users = sheetObjects_(SHEETS.USERS).filter(function (row) { return truthy_(row.Activo) && String(row.Rol) !== "ADMIN"; });
+  const missions = allMissions_();
+  const activeMissions = missions.filter(function (row) { return truthy_(row.Activa); });
+  const progress = sheetObjects_(SHEETS.PROGRESS);
+  const bonus = sheetObjects_(SHEETS.BONUS);
+  const badges = sheetObjects_(SHEETS.BADGES).filter(function (row) { return truthy_(row.Activa); });
+  const evidence = sheetObjects_(SHEETS.EVIDENCE);
+  const usersById = {};
+  const missionsById = {};
+  const progressByKey = {};
+  const bonusByUser = {};
+  users.forEach(function (user) { usersById[String(user.Id)] = user; });
+  missions.forEach(function (mission) { missionsById[String(mission.Id)] = mission; });
+  progress.forEach(function (row) { progressByKey[String(row.UsuarioId) + ":" + String(row.MisionId)] = row; });
+  bonus.forEach(function (row) {
+    const userId = String(row.UsuarioId);
+    if (!bonusByUser[userId]) bonusByUser[userId] = [];
+    bonusByUser[userId].push(row);
+  });
+
+  const people = buildAdminPeople_();
+  const totalAssigned = users.reduce(function (sum, user) {
+    return sum + activeMissions.filter(function (mission) { return missionAssignedTo_(mission.Audiencia, user.UAD); }).length;
+  }, 0);
+  const completedActive = users.reduce(function (sum, user) {
+    return sum + activeMissions.filter(function (mission) {
+      const row = progressByKey[String(user.Id) + ":" + String(mission.Id)];
+      return missionAssignedTo_(mission.Audiencia, user.UAD) && row && String(row.Estado) === "COMPLETADA";
+    }).length;
+  }, 0);
+  const totalPoints = people.reduce(function (sum, person) { return sum + Number(person.points || 0); }, 0);
+  const gameNames = { "word-search": "Ruta de palabras", sudoku: "Sudoku seguro", target: "Tiro al riesgo", "forest-run": "Carrera del bosque", "station-pairs": "Parejas del festival", "wellbeing-flight": "Vuelo del bienestar" };
+
+  const userRows = people.map(function (person) {
+    const source = usersById[String(person.id)] || {};
+    return { Nombre: person.name, Cedula: person.cedula, Telefono: person.phone || "", Correo: person.email, Cargo: person.cargo || "", UAD: person.uad, Estado: "ACTIVO", MisionesCompletadas: person.completed, MisionesDisponibles: person.total, AvancePorcentaje: person.total ? Math.round(person.completed / person.total * 100) : 0, Puntos: person.points, BonusCompletados: (bonusByUser[String(person.id)] || []).length, CreadoEn: reportDate_(source.CreadoEn) };
+  });
+
+  const missionRows = activeMissions.map(function (mission) {
+    const assigned = users.filter(function (user) { return missionAssignedTo_(mission.Audiencia, user.UAD); });
+    const completed = assigned.filter(function (user) { const row = progressByKey[String(user.Id) + ":" + String(mission.Id)]; return row && String(row.Estado) === "COMPLETADA"; }).length;
+    const started = assigned.filter(function (user) { const row = progressByKey[String(user.Id) + ":" + String(mission.Id)]; return row && String(row.Estado) === "INICIADA"; }).length;
+    return { Id: Number(mission.Id), Estacion: String(mission.Estacion), Mision: String(mission.Titulo), Audiencia: String(mission.Audiencia), Duracion: String(mission.Duracion || ""), Puntos: Number(mission.Puntos) || 0, EvidenciaObligatoria: truthy_(mission.EvidenciaObligatoria), Asignados: assigned.length, Iniciaron: started, Completaron: completed, Pendientes: Math.max(0, assigned.length - completed), CumplimientoPorcentaje: assigned.length ? Math.round(completed / assigned.length * 100) : 0, CreadaEn: reportDate_(mission.CreadaEn) };
+  });
+
+  const detailRows = [];
+  users.forEach(function (user) {
+    activeMissions.filter(function (mission) { return missionAssignedTo_(mission.Audiencia, user.UAD); }).forEach(function (mission) {
+      const row = progressByKey[String(user.Id) + ":" + String(mission.Id)];
+      detailRows.push({ Colaborador: String(user.Nombre), Cedula: String(user.Cedula), UAD: String(user.UAD), Cargo: String(user.Cargo || ""), Estacion: String(mission.Estacion), Mision: String(mission.Titulo), Estado: row ? String(row.Estado) : "PENDIENTE", IniciadaEn: reportDate_(row && row.IniciadaEn), CompletadaEn: reportDate_(row && row.CompletadaEn), PuntosMision: row && String(row.Estado) === "COMPLETADA" ? Number(mission.Puntos) || 0 : 0 });
+    });
+  });
+
+  const bonusRows = bonus.map(function (row) {
+    const user = usersById[String(row.UsuarioId)] || {};
+    return { Colaborador: String(user.Nombre || "Usuario eliminado"), Cedula: String(user.Cedula || ""), UAD: String(user.UAD || ""), Juego: gameNames[String(row.JuegoId)] || String(row.JuegoId), Puntos: Number(row.Puntaje) || 0, Record: bonusRecordValue_(row), Fecha: reportDate_(row.CompletadoEn) };
+  });
+
+  const uadGroups = {};
+  userRows.forEach(function (row) {
+    const key = String(row.UAD || "Sin UAD");
+    if (!uadGroups[key]) uadGroups[key] = { UAD: key, Participantes: 0, MisionesDisponibles: 0, MisionesCompletadas: 0, Puntos: 0 };
+    uadGroups[key].Participantes += 1;
+    uadGroups[key].MisionesDisponibles += Number(row.MisionesDisponibles) || 0;
+    uadGroups[key].MisionesCompletadas += Number(row.MisionesCompletadas) || 0;
+    uadGroups[key].Puntos += Number(row.Puntos) || 0;
+  });
+  const uadRows = Object.keys(uadGroups).sort().map(function (key) {
+    const row = uadGroups[key];
+    row.CumplimientoPorcentaje = row.MisionesDisponibles ? Math.round(row.MisionesCompletadas / row.MisionesDisponibles * 100) : 0;
+    return row;
+  });
+
+  const activityRows = [];
+  progress.forEach(function (row) {
+    const user = usersById[String(row.UsuarioId)];
+    const mission = missionsById[String(row.MisionId)];
+    if (!user || !mission) return;
+    activityRows.push({ Fecha: reportDate_(row.CompletadaEn || row.IniciadaEn), Tipo: String(row.Estado) === "COMPLETADA" ? "MISION_COMPLETADA" : "MISION_INICIADA", Colaborador: String(user.Nombre), Cedula: String(user.Cedula), UAD: String(user.UAD), Detalle: String(mission.Titulo) });
+  });
+  bonus.forEach(function (row) {
+    const user = usersById[String(row.UsuarioId)];
+    if (!user) return;
+    activityRows.push({ Fecha: reportDate_(row.CompletadoEn), Tipo: "MINIJUEGO", Colaborador: String(user.Nombre), Cedula: String(user.Cedula), UAD: String(user.UAD), Detalle: gameNames[String(row.JuegoId)] || String(row.JuegoId) });
+  });
+  activityRows.sort(function (a, b) { return String(b.Fecha).localeCompare(String(a.Fecha)); });
+
+  return {
+    generatedAt: new Date().toISOString(),
+    summary: [
+      { Indicador: "Colaboradores activos", Valor: users.length },
+      { Indicador: "Misiones activas", Valor: activeMissions.length },
+      { Indicador: "Asignaciones totales", Valor: totalAssigned },
+      { Indicador: "Misiones completadas", Valor: completedActive },
+      { Indicador: "Cumplimiento general (%)", Valor: totalAssigned ? Math.round(completedActive / totalAssigned * 100) : 0 },
+      { Indicador: "Puntos entregados", Valor: totalPoints },
+      { Indicador: "Partidas con resultado", Valor: bonus.length },
+      { Indicador: "Evidencias recibidas", Valor: evidence.length },
+      { Indicador: "Insignias activas", Valor: badges.length },
+    ],
+    users: userRows,
+    missions: missionRows,
+    progress: detailRows,
+    badges: badges.map(function (row) { return { Insignia: String(row.Titulo), Descripcion: String(row.Descripcion), Icono: String(row.Icono), ColorPrimario: String(row.ColorPrimario), ColorSecundario: String(row.ColorSecundario), Criterio: String(row.TipoCriterio), Meta: Number(row.Meta) || 1, Estacion: String(row.Estacion || ""), Orden: Number(row.Orden) || 100 }; }),
+    bonus: bonusRows,
+    evidence: evidence.map(function (row) { const user = usersById[String(row.UsuarioId)] || {}; const mission = missionsById[String(row.MisionId)] || {}; return { Colaborador: String(user.Nombre || "Usuario eliminado"), Cedula: String(user.Cedula || ""), UAD: String(user.UAD || ""), Mision: String(mission.Titulo || "Misión eliminada"), Archivo: String(row.NombreArchivo), Tipo: String(row.TipoMime), TamanoBytes: Number(row.TamanoBytes) || 0, Estado: String(row.Estado || "RECIBIDA"), Fecha: reportDate_(row.CreadoEn), URL: String(row.Url || "") }; }),
+    uads: uadRows,
+    activity: activityRows,
+  };
+}
+
+function reportDate_(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  return isNaN(date.getTime()) ? String(value) : date.toISOString();
 }
 
 function buildAdminBonusRecords_() {

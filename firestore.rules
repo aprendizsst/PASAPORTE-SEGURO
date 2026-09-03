@@ -1,0 +1,10 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // La aplicación accede únicamente mediante passportApi. El Admin SDK de
+    // Cloud Functions usa IAM y no expone Firestore directamente al navegador.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,7 +1,7 @@
 {
   "name": "pasaporte-seguro-2026",
   "private": true,
-  "version": "3.2.26",
+  "version": "3.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,9 +12,10 @@
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
-    "vite": "latest",
+    "fflate": "^0.8.2",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "vite": "latest"
   },
   "devDependencies": {
     "@types/react": "latest",

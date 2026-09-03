@@ -1,10 +1,12 @@
 # Validación operativa para 300 dispositivos
 
+> Esta guía corresponde al backend anterior de Apps Script. Para la arquitectura Firestore 3.3.0 y la nueva prueba sin contaminar Sheets, use `MIGRACION-FIREBASE-v3.3.md`.
+
 Esta guía separa la comprobación funcional del ensayo de capacidad. Las pruebas locales confirman lógica, compilación y distribución de las consultas; no pueden reproducir la cuota real de la cuenta de Google que ejecuta Apps Script.
 
 ## Antes del evento
 
-1. Publique la revisión 3.2.26 del frontend y una **nueva versión** de la implementación de Apps Script.
+1. Publique la revisión 3.3.0-compatible del frontend y una **nueva versión** de la implementación de Apps Script.
 2. Ejecute una vez `setupPasaporteSeguro()` y confirme que finaliza sin error.
 3. Verifique que los 300 usuarios estén creados antes del ingreso masivo. Evite registrar 300 cuentas durante el evento.
 4. Entre 1 y 5 minutos antes de abrir el acceso, ejecute `prepararEvento300Usuarios()`. Continúe únicamente si responde **Preparación completa**.

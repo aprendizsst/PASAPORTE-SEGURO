@@ -17,7 +17,7 @@ function renderApp() {
 // que GitHub Pages, el navegador o un proxy conserven una copia antigua vacía.
 const configScript = document.createElement("script");
 const configUrl = new URL("./config.js", document.baseURI);
-configUrl.searchParams.set("v", "3.2.26");
+configUrl.searchParams.set("v", "3.3.0");
 configUrl.searchParams.set("_", String(Date.now()));
 configScript.src = configUrl.toString();
 configScript.onload = renderApp;

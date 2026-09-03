@@ -1,9 +1,12 @@
-// Pegue entre comillas la URL /exec de su implementación de Google Apps Script.
-// Si queda vacío, la aplicación bloqueará el acceso y mostrará un aviso. Esta URL
-// es administrativa: los participantes no pueden cambiarla desde la aplicación.
+// Pegue entre comillas la URL /exec de su implementaciÃ³n de Google Apps Script.
+// Si queda vacÃ­o, la aplicaciÃ³n bloquearÃ¡ el acceso y mostrarÃ¡ un aviso. Esta URL
+// es administrativa: los participantes no pueden cambiarla desde la aplicaciÃ³n.
 window.PASSPORT_CONFIG = Object.freeze({
-  apiUrl: "https://script.google.com/macros/s/AKfycbzc4_V7WdPV9Fj83eDelbRuFfn_V28CzHuCIcT9ugiopAzL8PjoLlhegr3Q5-tNc5pc/exec",
-  // Puede desactivar una mejora visual sin borrar código ni modificar Google Sheets.
+  apiUrl: "https://us-east1-pasaporte-seguro.cloudfunctions.net/passportApi",
+  // Use "apps-script" durante la migraciÃ³n y "firebase" despuÃ©s de publicar
+  // la funciÃ³n passportApi. El cambio no altera ninguna pantalla del sitio.
+  provider: "firebase",
+  // Puede desactivar una mejora visual sin borrar cÃ³digo ni modificar Google Sheets.
   features: Object.freeze({
     dynamicCover: true,
     livingRoute: true,

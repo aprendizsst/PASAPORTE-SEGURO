@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.log
+*.tsbuildinfo
+load-tests/results/
+.DS_Store
+.firebase/
+functions/.env*
+.runtimeconfig.json
+*-firebase-adminsdk-*.json
+pasaporte-seguro-*.json

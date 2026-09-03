@@ -13,8 +13,10 @@ const missionId = String(process.env.PASAPORTE_LOAD_MISSION_ID || "").trim();
 const missionCode = String(process.env.PASAPORTE_LOAD_MISSION_CODE || "").trim();
 const outputPath = resolve(process.env.PASAPORTE_LOAD_OUTPUT || `load-tests/results/load-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
 
-if (!/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/i.test(apiUrl)) throw new Error("PASAPORTE_API_URL debe ser la URL pública /exec de Apps Script.");
-if (password.length < 12) throw new Error("PASAPORTE_LOAD_PASSWORD debe coincidir con LOAD_TEST_PASSWORD y tener mínimo 12 caracteres.");
+const validAppsScript = /^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/i.test(apiUrl);
+const validFirebase = /^https:\/\/[a-z0-9.-]+\.(?:cloudfunctions\.net|run\.app)(?:\/[^\s]*)?$/i.test(apiUrl);
+if (!validAppsScript && !validFirebase) throw new Error("PASAPORTE_API_URL debe ser una URL pública válida de Apps Script o Firebase Functions.");
+if (password.length < 12) throw new Error("PASAPORTE_LOAD_PASSWORD debe coincidir con la contraseña temporal de las cuentas de carga y tener mínimo 12 caracteres.");
 if (!stages.length) throw new Error("PASAPORTE_LOAD_STAGES no contiene etapas válidas.");
 if (writeEnabled && missionCode && !missionId) throw new Error("Defina PASAPORTE_LOAD_MISSION_ID cuando use PASAPORTE_LOAD_MISSION_CODE.");
 
