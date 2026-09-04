@@ -1,0 +1,11 @@
+V10.4 build checks
+==================
+OK · Sintaxis JavaScript validada con node --check.
+OK · Perfiles JER_TABLA + CONTROL_PERIODICO.
+OK · Filas REALIZADO/NORMAL/APTO no exigen recomendación.
+OK · Normalización semántica de tipo de examen V10.3.
+OK · Lista de exámenes de salida: solo nombres, sin estado “— REALIZADO”.
+OK · Recomendaciones: un único párrafo, ordenado por examen, con texto completo.
+OK · Visor PDF: ajuste al ancho, sin flex-centering, transform PDF.js correcto y reajuste responsive.
+OK · Archivos raíz y /js sincronizados.
+OK · Backend sin cambios respecto a V10.3.
