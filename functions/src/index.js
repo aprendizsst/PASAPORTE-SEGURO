@@ -168,7 +168,7 @@ async function startMissionApi(request) {
 async function storeEvidence(user, mission, input, requestId) {
   if (!input) return null;
   const mime = String(input.mime || "").toLowerCase();
-  if (!mime.startsWith("image/") && !mime.startsWith("video/")) throw new Error("La evidencia debe ser una foto o un video.");
+  if (!mime.startsWith("image/")) throw new Error("La evidencia debe ser una foto.");
   const bytes = Buffer.from(String(input.data || ""), "base64");
   if (!bytes.length || bytes.length > 7 * 1024 * 1024) throw new Error("La evidencia supera 7 MB.");
   const safeName = String(input.name || "evidencia").replace(/[^0-9A-Za-z._ -]/g, "_").replace(/\s+/g, "-").slice(0, 120);
@@ -183,7 +183,7 @@ async function storeEvidence(user, mission, input, requestId) {
 async function completeMissionApi(request) {
   const user = await requireSession(request.token, secret()); const mission = await allowedMission(user, request.missionId);
   if (!mission.sealCode || normalizeCode(request.sealCode) !== normalizeCode(mission.sealCode)) throw new Error("El código de la misión no es correcto.");
-  if (mission.evidenceRequired && !request.evidence) throw new Error("Esta misión requiere una foto o un video como evidencia.");
+  if (mission.evidenceRequired && !request.evidence) throw new Error("Esta misión requiere una foto como evidencia.");
   const evidence = await storeEvidence(user, mission, request.evidence, request.requestId);
   const ref = db.collection("progress").doc(`${user.id}_${mission.id}`); let completedAt;
   await db.runTransaction(async (transaction) => {

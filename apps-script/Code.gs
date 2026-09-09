@@ -378,7 +378,7 @@ function completeMissionApi_(request) {
   if (suppliedCode !== expectedCode) throw new Error("El código de la misión no es correcto.");
   const current = progressForUser_(user.Id).find(function (row) { return String(row.MisionId) === String(mission.Id) && row.Estado === "COMPLETADA"; });
   if (current) return { missionId: Number(mission.Id), status: "COMPLETADA", completedAt: new Date(current.CompletadaEn || new Date()).toISOString(), repeated: true };
-  if (truthy_(mission.EvidenciaObligatoria) && !request.evidence) throw new Error("Esta misión requiere una foto o un video como evidencia.");
+  if (truthy_(mission.EvidenciaObligatoria) && !request.evidence) throw new Error("Esta misión requiere una foto como evidencia.");
   if (request.evidence) saveEvidence_(user, mission, request.evidence);
   upsertProgress_(user.Id, mission.Id, "COMPLETADA");
   return { missionId: Number(mission.Id), status: "COMPLETADA", completedAt: new Date().toISOString() };
@@ -950,12 +950,12 @@ function normalizeMissionCode_(value) { return String(value || "").toUpperCase()
 
 function saveEvidence_(user, mission, input) {
   const mime = String(input.mime || "").toLowerCase();
-  if (mime.indexOf("image/") !== 0 && mime.indexOf("video/") !== 0) throw new Error("La evidencia debe ser una foto o un video.");
+  if (mime.indexOf("image/") !== 0) throw new Error("La evidencia debe ser una foto.");
   const encoded = String(input.data || "");
   if (!encoded || encoded.length > 10 * 1024 * 1024) throw new Error("La evidencia supera el tamaño permitido.");
   const bytes = Utilities.base64Decode(encoded);
   if (bytes.length > 7 * 1024 * 1024) throw new Error("La evidencia supera 7 MB.");
-  const name = safeEvidenceName_(input.name || (mime.indexOf("image/") === 0 ? "evidencia.jpg" : "evidencia.mp4"));
+  const name = safeEvidenceName_(input.name || "evidencia.jpg");
   const folder = evidenceFolder_();
   const file = folder.createFile(Utilities.newBlob(bytes, mime, String(mission.Id) + "-" + String(user.Id).slice(0, 8) + "-" + name));
   const lock = LockService.getScriptLock();
