@@ -26,3 +26,10 @@ configScript.onerror = () => {
   renderApp();
 };
 document.head.appendChild(configScript);
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    const serviceWorkerUrl = new URL("./sw.js", document.baseURI).toString();
+    void navigator.serviceWorker.register(serviceWorkerUrl, { scope: "./", updateViaCache: "none" }).catch(() => undefined);
+  });
+}

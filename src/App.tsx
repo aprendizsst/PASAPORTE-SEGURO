@@ -7,6 +7,7 @@ import type { BadgeDefinition } from "./FestivalExperience";
 import { AdminPagination, useAdminPage } from "./AdminPagination";
 import { audienceKey, missionAssignedTo } from "./adminData";
 import { useMissionSync } from "./useMissionSync";
+import { PwaInstall } from "./PwaInstall";
 
 const loadMiniGames = () => import("./MiniGames");
 const MiniGamesPage = lazy(loadMiniGames);
@@ -918,6 +919,7 @@ export default function Home() {
 
   return <main className="app-shell">
     <div className="aurora aurora-one" /><div className="aurora aurora-two" />
+    {!user && <PwaInstall />}
     {!opened && <section className="cover-stage" aria-label="Portada del Pasaporte Seguro">
       <div className="cover-perspective">
       <div className="book-cover clean-cover minimal-cover vibrant-cover"><span className="cover-spine" /><span className="cover-foil" /><span className="cover-light" aria-hidden="true" /><div className="cover-brand-ribbons" aria-hidden="true"><i /><i /><i /><i /></div>
