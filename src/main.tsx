@@ -7,6 +7,18 @@ declare global {
   interface Window { PASSPORT_CONFIG_LOAD_ERROR?: boolean }
 }
 
+function syncMobileViewport() {
+  const iosNavigator = navigator as Navigator & { standalone?: boolean };
+  const standalone = window.matchMedia("(display-mode: standalone)").matches || iosNavigator.standalone === true;
+  document.documentElement.classList.toggle("pwa-standalone", standalone);
+  document.documentElement.style.setProperty("--mobile-viewport-height", `${window.visualViewport?.height || window.innerHeight}px`);
+}
+
+syncMobileViewport();
+window.addEventListener("resize", syncMobileViewport);
+window.addEventListener("orientationchange", syncMobileViewport);
+window.visualViewport?.addEventListener("resize", syncMobileViewport);
+
 function renderApp() {
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode><App /></React.StrictMode>,

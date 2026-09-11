@@ -1,4 +1,4 @@
-const CACHE_NAME = "pasaporte-seguro-pwa-v1";
+const CACHE_NAME = "pasaporte-seguro-pwa-v2";
 const APP_SHELL = [
   "./",
   "./index.html",
