@@ -16,7 +16,7 @@ const SHEETS = {
 };
 
 const HEADERS = {
-  Usuarios: ["Id", "Nombre", "Cedula", "Telefono", "Correo", "Cargo", "UAD", "Avatar", "Rol", "PasswordSalt", "PasswordHash", "Activo", "CreadoEn", "SessionVersion"],
+  Usuarios: ["Id", "Nombre", "Cedula", "Telefono", "Correo", "Cargo", "UAD", "Avatar", "Rol", "PasswordSalt", "PasswordHash", "Activo", "CreadoEn", "SessionVersion", "ScoreResetAt"],
   Misiones: ["Id", "Estacion", "Icono", "Color", "Titulo", "Descripcion", "Puntos", "Audiencia", "Duracion", "Activa", "CreadaEn", "CreadaPor", "CodigoSello", "EvidenciaObligatoria", "EditadaEn"],
   Progreso: ["Id", "UsuarioId", "MisionId", "Estado", "IniciadaEn", "CompletadaEn"],
   Sesiones: ["Token", "UsuarioId", "ExpiraEn", "CreadaEn"],
@@ -37,7 +37,7 @@ const CACHE_KEYS = {
   ADMIN_BONUS_RECORDS: "pasaporte:admin-bonus-records:v1",
   BADGES: "pasaporte:badges:v1",
   BONUS_LEADERBOARD: "pasaporte:bonus-leaderboard:v1",
-  SCHEMA: "pasaporte:schema:v8",
+  SCHEMA: "pasaporte:schema:v9",
   USERS_WARM: "pasaporte:users:warm:v2",
   EVENT_WARM_UNTIL: "pasaporte:event:warm-until:v1",
   PROGRESS_SNAPSHOT: "pasaporte:event:progress:v1:",
@@ -55,7 +55,7 @@ const CACHE_TTL = {
   ACTIVITY: 600,
 };
 
-const WRITE_ACTIONS = ["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "verifyPasswordResetCode", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode", "adminManageBonusRecord"];
+const WRITE_ACTIONS = ["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "verifyPasswordResetCode", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode", "adminManageBonusRecord", "adminResetUserScore"];
 
 function doGet() {
   return json_({ ok: true, data: { service: "Pasaporte Seguro API", status: "ready", version: "3.3.0-compat" } });
@@ -100,6 +100,7 @@ function doPost(event) {
     else if (action === "adminDeleteUser") data = adminDeleteUserApi_(request);
     else if (action === "adminCreateRecoveryCode") data = adminCreateRecoveryCodeApi_(request);
     else if (action === "adminManageBonusRecord") data = adminManageBonusRecordApi_(request);
+    else if (action === "adminResetUserScore") data = adminResetUserScoreApi_(request);
     else if (action === "adminDashboard") data = adminDashboardApi_(request);
     else if (action === "adminReportData") data = adminReportDataApi_(request);
     else throw new Error("Acción no reconocida.");
@@ -281,7 +282,7 @@ function sessionApi_(request) {
 function missionsApi_(request) {
   const user = requireSession_(request.token);
   const admin = String(user.Rol) === "ADMIN";
-  return { missions: (admin ? activeMissions_() : allowedMissions_(user)).map(admin ? adminMission_ : publicMission_), uad: String(user.UAD || "") };
+  return { missions: (admin ? activeMissions_() : allowedMissions_(user)).map(admin ? adminMission_ : publicMission_), uad: String(user.UAD || ""), scoreResetAt: user.ScoreResetAt ? new Date(user.ScoreResetAt).toISOString() : "" };
 }
 
 function requestPasswordResetApi_(request) {
@@ -411,16 +412,20 @@ function completeBonusApi_(request) {
   bonusForUser_(user.Id);
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(12000)) throw busyError_("Estamos guardando otros resultados. Reintentando…");
-  let bestScore = score;
+  let awardedScore = score;
+  let totalScore = score;
   let bestRecord = record;
+  let nextRewardAt = nextColombiaRewardAt_(new Date());
   try {
     const latestRows = bonusForUser_(user.Id);
     const current = latestRows.find(function (row) { return String(row.JuegoId) === gameId; });
     if (current) {
       const currentRecord = bonusRecordValue_(current);
-      bestScore = Math.max(Number(current.Puntaje) || 0, score);
+      const canAward = colombiaDayKey_(current.CompletadoEn) !== colombiaDayKey_(new Date());
+      awardedScore = canAward ? score : 0;
+      totalScore = (Number(current.Puntaje) || 0) + awardedScore;
       bestRecord = Math.max(currentRecord, record);
-      const changes = { Puntaje: bestScore, Record: bestRecord, CompletadoEn: record > currentRecord ? new Date() : current.CompletadoEn || new Date() };
+      const changes = { Puntaje: totalScore, Record: bestRecord, CompletadoEn: canAward ? new Date() : current.CompletadoEn || new Date() };
       updateObjectRow_(SHEETS.BONUS, current._row, changes);
       Object.assign(current, changes);
     } else {
@@ -431,7 +436,26 @@ function completeBonusApi_(request) {
     invalidateUserActivity_(user.Id);
     cachePut_(bonusCacheKey_(user.Id), latestRows, CACHE_TTL.ACTIVITY);
   } finally { lock.releaseLock(); }
-  return { gameId: gameId, score: score, bestScore: bestScore, bestRecord: bestRecord, completed: true };
+  return { gameId: gameId, score: score, awardedScore: awardedScore, totalScore: totalScore, bestScore: totalScore, bestRecord: bestRecord, nextRewardAt: nextRewardAt, completed: true };
+}
+
+function colombiaDayKey_(value) {
+  const date = value ? new Date(value) : new Date();
+  if (isNaN(date.getTime())) return "";
+  return Utilities.formatDate(date, "America/Bogota", "yyyy-MM-dd");
+}
+
+function nextColombiaRewardAt_(value) {
+  const date = value ? new Date(value) : new Date();
+  const nextDay = new Date(date.getTime() + 24 * 60 * 60 * 1000);
+  return new Date(Utilities.formatDate(nextDay, "America/Bogota", "yyyy-MM-dd") + "T05:00:00.000Z").toISOString();
+}
+
+function earnedAfterScoreReset_(completedAt, resetAt) {
+  if (!resetAt) return true;
+  const completed = completedAt ? new Date(completedAt).getTime() : 0;
+  const reset = new Date(resetAt).getTime();
+  return isNaN(reset) || completed > reset;
 }
 
 function bonusRecordValue_(row) {
@@ -653,6 +677,30 @@ function adminManageBonusRecordApi_(request) {
   return result;
 }
 
+function adminResetUserScoreApi_(request) {
+  const admin = requireAdmin_(request.token);
+  const user = findUserById_(request.userId);
+  if (!user || !truthy_(user.Activo)) throw new Error("El usuario ya no existe o fue eliminado.");
+  if (String(user.Id) === String(admin.Id) || String(user.Rol) === "ADMIN") throw new Error("No se puede reiniciar el puntaje de una cuenta administradora.");
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) throw new Error("Hay otra actualización de puntaje en curso. Intenta nuevamente.");
+  const resetAt = new Date();
+  let affected = 0;
+  try {
+    updateObjectRow_(SHEETS.USERS, user._row, { ScoreResetAt: resetAt });
+    const rows = bonusForUser_(user.Id);
+    rows.forEach(function (row) {
+      updateObjectRow_(SHEETS.BONUS, row._row, { Puntaje: 0 });
+      row.Puntaje = 0;
+      affected += 1;
+    });
+    invalidateUserCache_(user);
+  } finally { lock.releaseLock(); }
+  invalidateBonusManagementCaches_([user.Id]);
+  invalidateUserActivity_(user.Id);
+  return { userId: String(user.Id), points: 0, resetAt: resetAt.toISOString(), bonusRowsReset: affected };
+}
+
 function adminDashboardApi_(request) {
   requireAdmin_(request.token);
   // Manual refresh also picks up edits made directly in the spreadsheet.
@@ -700,7 +748,7 @@ function adminReportDataApi_(request) {
 
   const userRows = people.map(function (person) {
     const source = usersById[String(person.id)] || {};
-    return { Nombre: person.name, Cedula: person.cedula, Telefono: person.phone || "", Correo: person.email, Cargo: person.cargo || "", UAD: person.uad, Estado: "ACTIVO", MisionesCompletadas: person.completed, MisionesDisponibles: person.total, AvancePorcentaje: person.total ? Math.round(person.completed / person.total * 100) : 0, Puntos: person.points, BonusCompletados: (bonusByUser[String(person.id)] || []).length, CreadoEn: reportDate_(source.CreadoEn) };
+    return { Nombre: person.name, Cedula: person.cedula, Telefono: person.phone || "", Correo: person.email, Cargo: person.cargo || "", UAD: person.uad, Estado: "ACTIVO", MisionesCompletadas: person.completed, MisionesDisponibles: person.total, AvancePorcentaje: person.total ? Math.round(person.completed / person.total * 100) : 0, Puntos: person.points, BonusCompletados: (bonusByUser[String(person.id)] || []).length, PuntajeReiniciadoEn: reportDate_(source.ScoreResetAt), CreadoEn: reportDate_(source.CreadoEn) };
   });
 
   const missionRows = activeMissions.map(function (mission) {
@@ -714,7 +762,7 @@ function adminReportDataApi_(request) {
   users.forEach(function (user) {
     activeMissions.filter(function (mission) { return missionAssignedTo_(mission.Audiencia, user.UAD); }).forEach(function (mission) {
       const row = progressByKey[String(user.Id) + ":" + String(mission.Id)];
-      detailRows.push({ Colaborador: String(user.Nombre), Cedula: String(user.Cedula), UAD: String(user.UAD), Cargo: String(user.Cargo || ""), Estacion: String(mission.Estacion), Mision: String(mission.Titulo), Estado: row ? String(row.Estado) : "PENDIENTE", IniciadaEn: reportDate_(row && row.IniciadaEn), CompletadaEn: reportDate_(row && row.CompletadaEn), PuntosMision: row && String(row.Estado) === "COMPLETADA" ? Number(mission.Puntos) || 0 : 0 });
+      detailRows.push({ Colaborador: String(user.Nombre), Cedula: String(user.Cedula), UAD: String(user.UAD), Cargo: String(user.Cargo || ""), Estacion: String(mission.Estacion), Mision: String(mission.Titulo), Estado: row ? String(row.Estado) : "PENDIENTE", IniciadaEn: reportDate_(row && row.IniciadaEn), CompletadaEn: reportDate_(row && row.CompletadaEn), PuntosMision: row && String(row.Estado) === "COMPLETADA" && earnedAfterScoreReset_(row.CompletadaEn, user.ScoreResetAt) ? Number(mission.Puntos) || 0 : 0 });
     });
   });
 
@@ -818,11 +866,13 @@ function userBundle_(user) {
   const bonusRows = bonusForUser_(user.Id);
   const bonusScores = {};
   const bonusRecords = {};
+  const bonusNextRewardAt = {};
   bonusRows.forEach(function (row) {
     bonusScores[String(row.JuegoId)] = Number(row.Puntaje) || 0;
     bonusRecords[String(row.JuegoId)] = bonusRecordValue_(row);
+    if (colombiaDayKey_(row.CompletadoEn) === colombiaDayKey_(new Date())) bonusNextRewardAt[String(row.JuegoId)] = nextColombiaRewardAt_(row.CompletadoEn);
   });
-  return { user: publicUser_(user), missions: missions.map(publicMission_), historyMissions: historyMissions, completed: completed, started: started, history: history, bonusCompleted: Object.keys(bonusScores), bonusScores: bonusScores, bonusRecords: bonusRecords, badgeDefinitions: activeBadges_() };
+  return { user: publicUser_(user), missions: missions.map(publicMission_), historyMissions: historyMissions, completed: completed, started: started, history: history, bonusCompleted: Object.keys(bonusScores), bonusScores: bonusScores, bonusRecords: bonusRecords, bonusNextRewardAt: bonusNextRewardAt, badgeDefinitions: activeBadges_() };
 }
 
 function buildAdminPeople_() {
@@ -854,7 +904,7 @@ function buildAdminPeople_() {
     return {
       id: String(user.Id), name: String(user.Nombre), cedula: String(user.Cedula), phone: String(user.Telefono || ""), email: String(user.Correo || ""), cargo: String(user.Cargo || ""),
       uad: String(user.UAD), completed: activeCompletedRows.length, total: available.length,
-      points: completedRows.reduce(function (sum, p) { return sum + (pointsByMission[String(p.MisionId)] || 0); }, 0) + (bonusByUser[String(user.Id)] || 0),
+      points: completedRows.filter(function (row) { return earnedAfterScoreReset_(row.CompletadaEn, user.ScoreResetAt); }).reduce(function (sum, p) { return sum + (pointsByMission[String(p.MisionId)] || 0); }, 0) + (bonusByUser[String(user.Id)] || 0),
       createdAt: user.CreadoEn ? new Date(user.CreadoEn).toISOString() : "",
     };
   });
@@ -1262,7 +1312,7 @@ function invalidateAdminDashboard_() {
 }
 
 function publicUser_(user) {
-  return { name: String(user.Nombre), cedula: String(user.Cedula), phone: String(user.Telefono || ""), email: String(user.Correo || ""), cargo: String(user.Cargo || ""), uad: String(user.UAD || ""), avatar: String(user.Avatar || "avatar:v1:2:0:1:0:0"), role: String(user.Rol) === "ADMIN" ? "ADMIN" : "USER" };
+  return { name: String(user.Nombre), cedula: String(user.Cedula), phone: String(user.Telefono || ""), email: String(user.Correo || ""), cargo: String(user.Cargo || ""), uad: String(user.UAD || ""), avatar: String(user.Avatar || "avatar:v1:2:0:1:0:0"), role: String(user.Rol) === "ADMIN" ? "ADMIN" : "USER", scoreResetAt: user.ScoreResetAt ? new Date(user.ScoreResetAt).toISOString() : "" };
 }
 
 function publicMission_(m) {

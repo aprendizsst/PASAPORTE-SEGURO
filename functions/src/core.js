@@ -27,6 +27,7 @@ const GAME_LIMITS = {
   "word-search": [80, 80], sudoku: [120, 120], target: [200, 500],
   "forest-run": [300, 5000], "station-pairs": [250, 340], "wellbeing-flight": [300, 500],
 };
+const COLOMBIA_OFFSET_MS = 5 * 60 * 60 * 1000;
 
 function cleanId(value) { return String(value || "").replace(/[^0-9A-Za-z-]/g, "").slice(0, 25); }
 function normalize(value) { return String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().replace(/\s+/g, " ").toLowerCase(); }
@@ -40,6 +41,29 @@ function toIso(value) {
   if (typeof value.toDate === "function") return value.toDate().toISOString();
   const date = value instanceof Date ? value : new Date(value);
   return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
+function valueMillis(value) {
+  if (!value) return 0;
+  if (typeof value.toMillis === "function") return value.toMillis();
+  if (typeof value.toDate === "function") return value.toDate().getTime();
+  const millis = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  return Number.isFinite(millis) ? millis : 0;
+}
+function colombiaDayKey(value = Date.now()) {
+  const millis = typeof value === "number" ? value : valueMillis(value);
+  return new Date(millis - COLOMBIA_OFFSET_MS).toISOString().slice(0, 10);
+}
+function nextColombiaDay(value = Date.now()) {
+  const millis = typeof value === "number" ? value : valueMillis(value);
+  const local = new Date(millis - COLOMBIA_OFFSET_MS);
+  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate() + 1) + COLOMBIA_OFFSET_MS);
+}
+function dailyBonusAward(currentScore, lastAwardAt, requestedScore, value = Date.now()) {
+  const millis = typeof value === "number" ? value : valueMillis(value);
+  const previousMillis = valueMillis(lastAwardAt);
+  const available = !previousMillis || colombiaDayKey(previousMillis) !== colombiaDayKey(millis);
+  const awardedScore = available ? Math.max(0, Number(requestedScore) || 0) : 0;
+  return { available, awardedScore, totalScore: Math.max(0, Number(currentScore) || 0) + awardedScore, nextRewardAt: nextColombiaDay(millis) };
 }
 function limited(value, max, message) {
   const text = String(value ?? "").trim().replace(/\s+/g, " ").slice(0, max);
@@ -108,7 +132,7 @@ async function requireAdmin(token, secret) {
 }
 
 function publicUser(user) {
-  return { name: user.name, cedula: user.cedula, phone: user.phone || "", email: user.email || "", cargo: user.cargo || "", uad: user.uad || "", avatar: user.avatar || "avatar:v2:2:0:1:0:", role: user.role === "ADMIN" ? "ADMIN" : "USER" };
+  return { name: user.name, cedula: user.cedula, phone: user.phone || "", email: user.email || "", cargo: user.cargo || "", uad: user.uad || "", avatar: user.avatar || "avatar:v2:2:0:1:0:", role: user.role === "ADMIN" ? "ADMIN" : "USER", scoreResetAt: toIso(user.scoreResetAt) };
 }
 function publicMission(mission, admin = false) {
   const value = { id: Number(mission.id), station: mission.station, icon: mission.icon, color: mission.color, title: mission.title, description: mission.description, points: Number(mission.points) || 0, audience: mission.audience, duration: mission.duration || "8 min", evidenceRequired: Boolean(mission.evidenceRequired) };
@@ -142,7 +166,7 @@ function sheetQueue(transaction, sheet, id, row, operation = "UPSERT") {
   transaction.set(ref, { sheet, entityId: String(id), operation, row, status: "PENDING", attempts: 0, createdAt: now(), updatedAt: now() });
 }
 function userSheetRow(user) {
-  return { Id: user.id, Nombre: user.name, Cedula: user.cedula, Telefono: user.phone || "", Correo: user.email || "", Cargo: user.cargo || "", UAD: user.uad || "", Avatar: user.avatar || "", Rol: user.role || "USER", PasswordSalt: user.passwordSalt || "", PasswordHash: user.passwordHash || "", Activo: Boolean(user.active), CreadoEn: toIso(user.createdAt), SessionVersion: String(user.sessionVersion || 1) };
+  return { Id: user.id, Nombre: user.name, Cedula: user.cedula, Telefono: user.phone || "", Correo: user.email || "", Cargo: user.cargo || "", UAD: user.uad || "", Avatar: user.avatar || "", Rol: user.role || "USER", PasswordSalt: user.passwordSalt || "", PasswordHash: user.passwordHash || "", Activo: Boolean(user.active), CreadoEn: toIso(user.createdAt), SessionVersion: String(user.sessionVersion || 1), ScoreResetAt: toIso(user.scoreResetAt) };
 }
 function missionSheetRow(mission) {
   return { Id: mission.id, Estacion: mission.station, Icono: mission.icon, Color: mission.color, Titulo: mission.title, Descripcion: mission.description, Puntos: mission.points, Audiencia: mission.audience, Duracion: mission.duration, Activa: Boolean(mission.active), CreadaEn: toIso(mission.createdAt), CreadaPor: mission.createdBy || "", CodigoSello: mission.sealCode || "", EvidenciaObligatoria: Boolean(mission.evidenceRequired), EditadaEn: toIso(mission.updatedAt) };
@@ -150,7 +174,8 @@ function missionSheetRow(mission) {
 
 module.exports = {
   db, FieldValue, Timestamp, getStorage, STATIONS, GAME_NAMES, GAME_LIMITS,
-  cleanId, normalize, audienceKey, missionAssignedTo, sha256, randomId, now, toIso, limited, clamp,
+  cleanId, normalize, audienceKey, missionAssignedTo, sha256, randomId, now, toIso, valueMillis,
+  colombiaDayKey, nextColombiaDay, dailyBonusAward, limited, clamp,
   createPassword, verifyPassword, verifyPasswordAsync, createSessionToken, requireSession, requireAdmin,
   publicUser, publicMission, publicBadge, validateMission, validateBadge, missionCode, normalizeCode,
   sheetQueue, userSheetRow, missionSheetRow,

@@ -81,6 +81,11 @@ function backend() {
       base64EncodeWebSafe: (value) => toBuffer(value).toString('base64url'),
       base64DecodeWebSafe: (value) => [...Buffer.from(String(value), 'base64url')],
       newBlob: (value) => ({ getDataAsString: () => toBuffer(value).toString('utf8') }),
+      formatDate: (value, timezone, pattern) => {
+        assert.equal(timezone, 'America/Bogota');
+        assert.equal(pattern, 'yyyy-MM-dd');
+        return new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(value));
+      },
     },
   });
   vm.runInContext(fs.readFileSync(path.join(root, 'apps-script/Code.gs'), 'utf8'), ctx);
@@ -146,6 +151,22 @@ test('sesión, menús, progreso administrativo y validación de sello usan la mi
   assert.equal(ctx.buildAdminPeople_()[0].total, 2);
   assert.throws(() => ctx.missionsApi_({ token: 'invalid' }), /Sesión/);
   assert.ok(ctx.missionsApi_({ token: 'admin' }).missions[0].sealCode);
+});
+
+test('bonus diario y reinicio de puntaje conservan récords y avances', () => {
+  const { ctx, data } = backend();
+  data.Bonus.push({ Id: 'bonus-a-target', UsuarioId: 'a', JuegoId: 'target', Puntaje: 200, Record: 350, CompletadoEn: new Date(), _row: 2 });
+  const replay = ctx.completeBonusApi_({ token: 'a', gameId: 'target', score: 200, record: 400 });
+  assert.equal(replay.awardedScore, 0);
+  assert.equal(replay.totalScore, 200);
+  assert.equal(replay.bestRecord, 400);
+
+  const reset = ctx.adminResetUserScoreApi_({ token: 'admin', userId: 'a' });
+  assert.equal(reset.points, 0);
+  assert.equal(data.Bonus[0].Puntaje, 0);
+  assert.equal(data.Bonus[0].Record, 400);
+  assert.ok(Number.isFinite(new Date(data.Usuarios[0].ScoreResetAt).getTime()));
+  assert.equal(ctx.buildAdminPeople_().find((person) => person.id === 'a').points, 0);
 });
 
 const missionInput = { title: 'Reto asignado', station: 'Estación Salud', description: 'Actividad de prueba', audience: 'UAD Chiquinquirá', duration: '8 min', points: 100 };

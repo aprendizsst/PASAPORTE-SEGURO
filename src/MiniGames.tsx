@@ -8,6 +8,7 @@ type Props = {
   completed: string[];
   scores: Record<string, number>;
   records: Record<string, number>;
+  cooldowns: Record<string, string>;
   leaderboard: BonusLeaderboardEntry[];
   leaderboardLoading: boolean;
   busy: string;
@@ -24,30 +25,34 @@ const games: { id: BonusGameId; title: string; subtitle: string; points: number;
   { id: "wellbeing-flight", title: "Vuelo del bienestar", subtitle: "Vuela entre ecoportales y mensajes positivos", points: 300, color: "#3c9ee8" },
 ];
 
-export default function MiniGamesPage({ completed, scores, records, leaderboard, leaderboardLoading, busy, onRefreshLeaderboard, onComplete }: Props) {
+export default function MiniGamesPage({ completed, scores, records, cooldowns, leaderboard, leaderboardLoading, busy, onRefreshLeaderboard, onComplete }: Props) {
   const [selected, setSelected] = useState<BonusGameId | null>(null);
   const current = games.find((game) => game.id === selected);
+  const rewardLocked = (gameId: BonusGameId) => Date.parse(cooldowns[gameId] || "") > Date.now();
+  const currentLocked = current ? rewardLocked(current.id) : false;
 
   return <div className="page-content bonus-page">
     <div className="bonus-hero">
-      <div><p className="step-label">ZONA BONUS</p><h2>Juega, aprende y suma puntos</h2><p>Retos más completos que se ejecutan en tu dispositivo. Solo enviamos el resultado cuando terminas.</p></div>
+      <div><p className="step-label">ZONA BONUS</p><h2>Juega, aprende y suma puntos</h2><p>Cada minijuego entrega puntos una vez por día. Puedes repetirlo para mejorar tu récord y mañana volverá a dar recompensa.</p></div>
       <div className="bonus-score"><span>★</span><b>{completed.length}/{games.length}</b><small>juegos superados</small></div>
     </div>
 
     <div className="bonus-grid">{games.map((game, index) => {
       const done = completed.includes(game.id);
-      return <button className={`bonus-card ${done ? "done" : ""}`} style={{ "--game": game.color, "--delay": `${index * .08}s` } as React.CSSProperties} key={game.id} onClick={() => setSelected(game.id)}>
-        <span className="bonus-card-icon"><GameIcon name={game.id} /></span><span className="bonus-card-copy"><small>{done ? "COMPLETADO" : "MINIJUEGO"}</small><b>{game.title}</b><i>{game.subtitle}</i></span><span className="bonus-points">{done ? `✓ ${scores[game.id] || game.points}` : game.id === "target" ? "hasta 200" : `+${game.points}`}<small>pts</small></span>
+      const locked = rewardLocked(game.id);
+      return <button className={`bonus-card ${done ? "done" : ""} ${locked ? "cooldown" : ""}`} style={{ "--game": game.color, "--delay": `${index * .08}s` } as React.CSSProperties} key={game.id} onClick={() => setSelected(game.id)}>
+        <span className="bonus-card-icon"><GameIcon name={game.id} /></span><span className="bonus-card-copy"><small>{locked ? "PUNTOS DISPONIBLES MAÑANA" : done ? "RECOMPENSA DISPONIBLE" : "MINIJUEGO"}</small><b>{game.title}</b><i>{game.subtitle}</i></span><span className="bonus-points">{locked ? "⏳ Hoy" : game.id === "target" ? "hasta 200" : `+${game.points}`}<small>{locked ? `${scores[game.id] || 0} acumulados` : "pts"}</small></span>
       </button>;
     })}</div>
 
     <BonusLeaderboard entries={leaderboard} loading={leaderboardLoading} onRefresh={onRefreshLeaderboard} />
 
     {current && typeof document !== "undefined" && createPortal(<div className="game-backdrop game-portal" role="dialog" aria-modal="true" aria-label={current.title}><div className="game-modal" style={{ "--game": current.color } as React.CSSProperties}>
-      <div className="game-modal-heading"><span><GameIcon name={current.id} /></span><div><small>ZONA BONUS · {current.id === "target" ? "HASTA " : ""}{current.points} PUNTOS</small><h3>{current.title}</h3></div><button className="game-close" onClick={() => setSelected(null)} aria-label="Cerrar minijuego">×</button></div>
-        {current.id === "word-search" && <WordSearchGame completed={completed.includes(current.id)} busy={busy === `bonus-${current.id}`} onComplete={() => onComplete(current.id, current.points)} />}
-        {current.id === "sudoku" && <SudokuGame completed={completed.includes(current.id)} busy={busy === `bonus-${current.id}`} onComplete={() => onComplete(current.id, current.points)} />}
-        {current.id === "target" && <TargetGame completed={completed.includes(current.id)} busy={busy === `bonus-${current.id}`} onComplete={(score, record) => onComplete(current.id, score, record)} />}
+      <div className="game-modal-heading"><span><GameIcon name={current.id} /></span><div><small>{currentLocked ? "JUEGA DE NUEVO · SIN PUNTOS ADICIONALES HOY" : `ZONA BONUS · ${current.id === "target" ? "HASTA " : ""}${current.points} PUNTOS`}</small><h3>{current.title}</h3></div><button className="game-close" onClick={() => setSelected(null)} aria-label="Cerrar minijuego">×</button></div>
+        {currentLocked && <p className="bonus-cooldown-note">Ya recibiste la recompensa de este juego hoy. Puedes practicar o mejorar tu récord; mañana volverá a sumar puntos.</p>}
+        {current.id === "word-search" && <WordSearchGame rewardLocked={currentLocked} busy={busy === `bonus-${current.id}`} onComplete={() => onComplete(current.id, current.points)} />}
+        {current.id === "sudoku" && <SudokuGame rewardLocked={currentLocked} busy={busy === `bonus-${current.id}`} onComplete={() => onComplete(current.id, current.points)} />}
+        {current.id === "target" && <TargetGame rewardLocked={currentLocked} busy={busy === `bonus-${current.id}`} onComplete={(score, record) => onComplete(current.id, score, record)} />}
         {current.id === "forest-run" && <ForestRunGame bestRecord={records[current.id] || 0} busy={busy === `bonus-${current.id}`} onComplete={(score, record) => onComplete(current.id, score, record)} />}
         {current.id === "station-pairs" && <StationPairsGame bestRecord={records[current.id] || 0} busy={busy === `bonus-${current.id}`} onComplete={(score, record) => onComplete(current.id, score, record)} />}
         {current.id === "wellbeing-flight" && <WellbeingFlightGame bestRecord={records[current.id] || 0} busy={busy === `bonus-${current.id}`} onComplete={(score, record) => onComplete(current.id, score, record)} />}
@@ -103,7 +108,7 @@ function createWordPuzzle() {
   return { grid, words };
 }
 
-function WordSearchGame({ completed, busy, onComplete }: { completed: boolean; busy: boolean; onComplete: () => Promise<void> }) {
+function WordSearchGame({ rewardLocked, busy, onComplete }: { rewardLocked: boolean; busy: boolean; onComplete: () => Promise<void> }) {
   const [puzzle, setPuzzle] = useState(createWordPuzzle);
   const [start, setStart] = useState<[number, number] | null>(null);
   const [found, setFound] = useState<string[]>([]);
@@ -129,7 +134,7 @@ function WordSearchGame({ completed, busy, onComplete }: { completed: boolean; b
     setMessage(next.length === puzzle.words.length ? "¡Encontraste todas las palabras!" : `¡${match} encontrada! Sigue así.`);
   }
 
-  return <div className="game-body word-game"><div className="game-tools"><span>{found.length}/{puzzle.words.length} encontradas</span><button type="button" onClick={newPuzzle}>↻ Nueva sopa</button></div><div className="word-list">{puzzle.words.map((word) => <span className={found.includes(word) ? "found" : ""} key={word}>{found.includes(word) ? "✓" : "○"} {word}</span>)}</div><div className="word-grid">{puzzle.grid.map((row, r) => row.map((letter, c) => <button type="button" className={`${marked.has(`${r}-${c}`) ? "marked" : ""} ${start?.[0] === r && start?.[1] === c ? "selected" : ""}`} key={`${r}-${c}`} onClick={() => choose(r, c)}>{letter}</button>))}</div><p className="game-message">{message}</p>{found.length === puzzle.words.length && <button className="game-complete-button" disabled={completed || busy} onClick={onComplete}>{busy ? "Guardando..." : completed ? "Bonus ya guardado ✓" : "Reclamar 80 puntos"}</button>}</div>;
+  return <div className="game-body word-game"><div className="game-tools"><span>{found.length}/{puzzle.words.length} encontradas</span><button type="button" onClick={newPuzzle}>↻ Nueva sopa</button></div><div className="word-list">{puzzle.words.map((word) => <span className={found.includes(word) ? "found" : ""} key={word}>{found.includes(word) ? "✓" : "○"} {word}</span>)}</div><div className="word-grid">{puzzle.grid.map((row, r) => row.map((letter, c) => <button type="button" className={`${marked.has(`${r}-${c}`) ? "marked" : ""} ${start?.[0] === r && start?.[1] === c ? "selected" : ""}`} key={`${r}-${c}`} onClick={() => choose(r, c)}>{letter}</button>))}</div><p className="game-message">{message}</p>{found.length === puzzle.words.length && <button className="game-complete-button" disabled={rewardLocked || busy} onClick={onComplete}>{busy ? "Guardando..." : rewardLocked ? "Puntos disponibles mañana ✓" : "Reclamar 80 puntos"}</button>}</div>;
 }
 
 function cellsBetween(start: [number, number], end: [number, number]) {
@@ -195,7 +200,7 @@ function createSudokuPuzzle(): SudokuPuzzle {
   return { puzzle, solution };
 }
 
-function SudokuGame({ completed, busy, onComplete }: { completed: boolean; busy: boolean; onComplete: () => Promise<void> }) {
+function SudokuGame({ rewardLocked, busy, onComplete }: { rewardLocked: boolean; busy: boolean; onComplete: () => Promise<void> }) {
   const [game, setGame] = useState<SudokuPuzzle>(createSudokuPuzzle);
   const [values, setValues] = useState(() => game.puzzle.map((row) => [...row]));
   const [selected, setSelected] = useState<[number, number] | null>(null);
@@ -228,7 +233,7 @@ function SudokuGame({ completed, busy, onComplete }: { completed: boolean; busy:
     const active = selected?.[0] === r && selected?.[1] === c;
     const related = selected ? selected[0] === r || selected[1] === c || (Math.floor(selected[0] / 3) === Math.floor(r / 3) && Math.floor(selected[1] / 3) === Math.floor(c / 3)) : false;
     return <button type="button" aria-label={`Fila ${r + 1}, columna ${c + 1}${value ? `: ${value}` : " vacía"}`} className={`${fixed ? "fixed" : "editable"} ${active ? "selected" : ""} ${related ? "related" : ""} ${mistakes.has(`${r}-${c}`) ? "mistake" : ""} ${(c + 1) % 3 === 0 && c < 8 ? "block-right" : ""} ${(r + 1) % 3 === 0 && r < 8 ? "block-bottom" : ""}`} key={`${r}-${c}`} onClick={() => { if (!fixed) setSelected([r, c]); }}>{value || ""}</button>;
-  }))}</div><div className="sudoku-keypad" aria-label="Teclado de sudoku">{SUDOKU_NUMBERS.map((number) => <button type="button" key={number} onClick={() => enterNumber(number)}>{number}</button>)}<button type="button" className="erase" onClick={() => enterNumber(0)} aria-label="Borrar casilla">⌫</button></div><p className="game-message">{message}</p>{!solved ? <button className="game-check-button" onClick={validate}>Comprobar solución</button> : <button className="game-complete-button" disabled={completed || busy} onClick={onComplete}>{busy ? "Guardando..." : completed ? "Bonus ya guardado ✓" : "Reclamar 120 puntos"}</button>}</div>;
+  }))}</div><div className="sudoku-keypad" aria-label="Teclado de sudoku">{SUDOKU_NUMBERS.map((number) => <button type="button" key={number} onClick={() => enterNumber(number)}>{number}</button>)}<button type="button" className="erase" onClick={() => enterNumber(0)} aria-label="Borrar casilla">⌫</button></div><p className="game-message">{message}</p>{!solved ? <button className="game-check-button" onClick={validate}>Comprobar solución</button> : <button className="game-complete-button" disabled={rewardLocked || busy} onClick={onComplete}>{busy ? "Guardando..." : rewardLocked ? "Puntos disponibles mañana ✓" : "Reclamar 120 puntos"}</button>}</div>;
 }
 
 type AimPhase = "ready" | "horizontal" | "vertical" | "flight" | "finished";
@@ -246,7 +251,7 @@ function dartScore(x: number, y: number) {
   return 5;
 }
 
-function TargetGame({ completed, busy, onComplete }: { completed: boolean; busy: boolean; onComplete: (score: number, record: number) => Promise<void> }) {
+function TargetGame({ rewardLocked, busy, onComplete }: { rewardLocked: boolean; busy: boolean; onComplete: (score: number, record: number) => Promise<void> }) {
   const [phase, setPhase] = useState<AimPhase>("ready");
   const [timeLeft, setTimeLeft] = useState(TARGET_SECONDS);
   const [xAim, setXAim] = useState(50);
@@ -306,7 +311,7 @@ function TargetGame({ completed, busy, onComplete }: { completed: boolean; busy:
     <div className="target-board" aria-label="Diana de puntuación"><i className="target-ring ring-5">5</i><i className="target-ring ring-20">20</i><i className="target-ring ring-40">40</i><i className="target-ring ring-60">60</i><i className="target-ring ring-80">80</i><i className="target-ring ring-100">100</i>{landings.map((dart, index) => <span className="dart-mark" style={{ left: `${dart.x}%`, top: `${dart.y}%` }} key={index}>{index + 1}</span>)}{landing && <span className="dart-mark flying" style={{ left: `${landing.x}%`, top: `${landing.y}%` }}>➤</span>}</div>
     <div className={`aim-axis aim-axis-y ${phase === "vertical" ? "active" : ""}`}><small>ALTURA</small><div><i style={{ top: `${yAim}%` }} /></div></div>
     <div className={`aim-axis aim-axis-x ${phase === "horizontal" ? "active" : ""}`}><small>DIRECCIÓN</small><div><i style={{ left: `${xAim}%` }} /></div></div>
-  </div>{phase === "ready" && <button className="game-complete-button target-action" onClick={start}>Iniciar reto · {TARGET_SECONDS} segundos</button>}{(phase === "horizontal" || phase === "vertical") && <button className="game-complete-button target-action pulse" onClick={lockAim}>{phase === "horizontal" ? "1. Fijar dirección horizontal" : "2. Fijar altura y lanzar"}</button>}{phase === "flight" && <div className="flight-message">Dardo en trayectoria…</div>}{phase === "finished" && <div className={`target-result ${passed ? "passed" : ""}`}><b>{passed ? "¡Gran puntería!" : "Puedes acercarte más al centro"}</b><p>Lograste {precision} puntos de precisión con {landings.length} dardo{landings.length === 1 ? "" : "s"}. {passed ? `Tu recompensa es de ${reward} puntos.` : "Necesitas al menos 180 puntos de precisión."}</p>{passed ? <button className="game-complete-button" disabled={busy} onClick={() => onComplete(reward, precision)}>{busy ? "Guardando..." : completed ? `Actualizar récord · ${precision}` : `Reclamar ${reward} puntos`}</button> : <button className="game-check-button" onClick={start}>Intentar nuevamente</button>}{completed && <button className="target-replay" onClick={start}>Jugar de nuevo</button>}</div>}</div>;
+  </div>{phase === "ready" && <button className="game-complete-button target-action" onClick={start}>Iniciar reto · {TARGET_SECONDS} segundos</button>}{(phase === "horizontal" || phase === "vertical") && <button className="game-complete-button target-action pulse" onClick={lockAim}>{phase === "horizontal" ? "1. Fijar dirección horizontal" : "2. Fijar altura y lanzar"}</button>}{phase === "flight" && <div className="flight-message">Dardo en trayectoria…</div>}{phase === "finished" && <div className={`target-result ${passed ? "passed" : ""}`}><b>{passed ? "¡Gran puntería!" : "Puedes acercarte más al centro"}</b><p>Lograste {precision} puntos de precisión con {landings.length} dardo{landings.length === 1 ? "" : "s"}. {passed ? rewardLocked ? "Hoy puedes mejorar tu récord sin sumar puntos adicionales." : `Tu recompensa es de ${reward} puntos.` : "Necesitas al menos 180 puntos de precisión."}</p>{passed ? <button className="game-complete-button" disabled={busy} onClick={() => onComplete(reward, precision)}>{busy ? "Guardando..." : rewardLocked ? `Guardar récord · sin puntos hoy` : `Reclamar ${reward} puntos`}</button> : <button className="game-check-button" onClick={start}>Intentar nuevamente</button>}<button className="target-replay" onClick={start}>Jugar de nuevo</button></div>}</div>;
 }
 
 const RECORD_GAME_LABELS: { id: BonusGameId; label: string; unit: string }[] = [

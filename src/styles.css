@@ -553,3 +553,13 @@ body{min-height:100svh}
   .pwa-standalone .passport-header{height:calc(68px + env(safe-area-inset-top));padding-top:env(safe-area-inset-top)}
   .pwa-standalone .passport-stage{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 }
+
+/* Puntaje y recompensas diarias v3.3.2 */
+.bonus-card.cooldown{border-color:color-mix(in srgb,var(--game) 24%,var(--line));background:linear-gradient(135deg,color-mix(in srgb,var(--game) 5%,#fff),#f7f9fc)}
+.bonus-card.cooldown .bonus-card-icon{filter:saturate(.7)}
+.bonus-card.cooldown .bonus-points{color:#6d788b;font-size:12px}
+.bonus-card.cooldown .bonus-points small{max-width:88px;white-space:normal}
+.bonus-cooldown-note{margin:14px 18px 0;padding:10px 13px;border:1px solid color-mix(in srgb,var(--game) 24%,#dfe5ec);border-radius:12px;color:#53647b;background:color-mix(in srgb,var(--game) 6%,#fff);font-size:10px;line-height:1.5;text-align:center}
+.user-actions .score-reset-outline{color:#6b4bb2;border-color:#ddd1f5;background:#faf7ff}
+.score-reset-confirm>span{background:linear-gradient(145deg,#7752ca,#12cfe0)}
+@media(max-width:600px){.bonus-cooldown-note{margin-inline:14px}.user-actions{display:grid;grid-template-columns:1fr 1fr}.user-actions button{width:100%}}

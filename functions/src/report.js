@@ -1,4 +1,4 @@
-const { db, GAME_NAMES, missionAssignedTo, toIso } = require("./core");
+const { db, GAME_NAMES, missionAssignedTo, toIso, valueMillis } = require("./core");
 
 function docs(snapshot) { return snapshot.docs.map((item) => ({ id: item.id, ...item.data() })); }
 
@@ -28,8 +28,10 @@ function buildReportData(data) {
     const available = activeMissions.filter((mission) => missionAssignedTo(mission.audience, user.uad));
     const completed = data.progress.filter((row) => row.userId === user.id && row.status === "COMPLETADA");
     const completedAvailable = completed.filter((row) => available.some((mission) => String(mission.id) === String(row.missionId)));
-    const points = completed.reduce((sum, row) => sum + (pointsByMission.get(String(row.missionId)) || 0), 0) + (bonusByUser.get(user.id) || []).reduce((sum, row) => sum + (Number(row.score) || 0), 0);
-    return { Nombre: user.name, Cedula: user.cedula, Telefono: user.phone || "", Correo: user.email || "", Cargo: user.cargo || "", UAD: user.uad || "", Estado: "ACTIVO", MisionesCompletadas: completedAvailable.length, MisionesDisponibles: available.length, AvancePorcentaje: available.length ? Math.round(completedAvailable.length / available.length * 100) : 0, Puntos: points, BonusCompletados: (bonusByUser.get(user.id) || []).length, CreadoEn: toIso(user.createdAt) };
+    const resetAt = valueMillis(user.scoreResetAt);
+    const scoredProgress = resetAt ? completed.filter((row) => valueMillis(row.completedAt) > resetAt) : completed;
+    const points = scoredProgress.reduce((sum, row) => sum + (pointsByMission.get(String(row.missionId)) || 0), 0) + (bonusByUser.get(user.id) || []).reduce((sum, row) => sum + (Number(row.score) || 0), 0);
+    return { Nombre: user.name, Cedula: user.cedula, Telefono: user.phone || "", Correo: user.email || "", Cargo: user.cargo || "", UAD: user.uad || "", Estado: "ACTIVO", MisionesCompletadas: completedAvailable.length, MisionesDisponibles: available.length, AvancePorcentaje: available.length ? Math.round(completedAvailable.length / available.length * 100) : 0, Puntos: points, BonusCompletados: (bonusByUser.get(user.id) || []).length, PuntajeReiniciadoEn: toIso(user.scoreResetAt), CreadoEn: toIso(user.createdAt) };
   });
 
   const missionRows = activeMissions.map((mission) => {
@@ -43,7 +45,8 @@ function buildReportData(data) {
   const detailRows = [];
   users.forEach((user) => activeMissions.filter((mission) => missionAssignedTo(mission.audience, user.uad)).forEach((mission) => {
     const row = progressByKey.get(`${user.id}:${mission.id}`);
-    detailRows.push({ Colaborador: user.name, Cedula: user.cedula, UAD: user.uad, Cargo: user.cargo || "", Estacion: mission.station, Mision: mission.title, Estado: row?.status || "PENDIENTE", IniciadaEn: toIso(row?.startedAt), CompletadaEn: toIso(row?.completedAt), PuntosMision: row?.status === "COMPLETADA" ? Number(mission.points) || 0 : 0 });
+    const scoresNow = row?.status === "COMPLETADA" && (!valueMillis(user.scoreResetAt) || valueMillis(row.completedAt) > valueMillis(user.scoreResetAt));
+    detailRows.push({ Colaborador: user.name, Cedula: user.cedula, UAD: user.uad, Cargo: user.cargo || "", Estacion: mission.station, Mision: mission.title, Estado: row?.status || "PENDIENTE", IniciadaEn: toIso(row?.startedAt), CompletadaEn: toIso(row?.completedAt), PuntosMision: scoresNow ? Number(mission.points) || 0 : 0 });
   }));
 
   const bonusRows = realBonus.map((row) => {

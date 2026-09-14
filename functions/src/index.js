@@ -1,12 +1,11 @@
 const crypto = require("node:crypto");
-const nodemailer = require("nodemailer");
 const { onRequest } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineSecret, defineString } = require("firebase-functions/params");
 const { logger } = require("firebase-functions");
 const {
   db, FieldValue, getStorage, GAME_NAMES, GAME_LIMITS, cleanId, normalize, audienceKey,
-  missionAssignedTo, sha256, randomId, now, toIso, limited, clamp, createPassword,
+  missionAssignedTo, sha256, randomId, now, toIso, dailyBonusAward, limited, clamp, createPassword,
   verifyPasswordAsync, createSessionToken, requireSession, requireAdmin, publicUser, publicMission,
   publicBadge, validateMission, validateBadge, missionCode, normalizeCode, sheetQueue,
   userSheetRow, missionSheetRow,
@@ -23,7 +22,7 @@ const SMTP_FROM = defineString("PASSPORT_SMTP_FROM", { default: "Pasaporte Segur
 const SHEET_ID = defineString("PASSPORT_SHEET_ID", { default: "" });
 const ALLOWED_ORIGINS = defineString("PASSPORT_ALLOWED_ORIGINS", { default: "https://aprendizsst.github.io" });
 
-const WRITE_ACTIONS = new Set(["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "verifyPasswordResetCode", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode", "adminManageBonusRecord"]);
+const WRITE_ACTIONS = new Set(["register", "startMission", "completeMission", "updateAvatar", "completeBonus", "requestPasswordReset", "verifyPasswordResetCode", "resetPassword", "adminCreateMission", "adminEditMission", "adminDeleteMission", "adminCreateBadge", "adminEditBadge", "adminDeleteBadge", "adminEditUser", "adminDeleteUser", "adminCreateRecoveryCode", "adminResetUserScore", "adminManageBonusRecord"]);
 const memoryCache = new Map();
 
 async function cached(key, ttlMs, loader) {
@@ -94,9 +93,15 @@ async function userBundle(user) {
   progress.forEach((row) => { if (row.status === "COMPLETADA") history[Number(row.missionId)] = toIso(row.completedAt); });
   const completedSet = new Set(completed.map(String));
   const historyMissions = allMissionRows.filter((mission) => completedSet.has(String(mission.id)));
-  const bonusScores = {}; const bonusRecords = {};
-  bonusSnapshot.docs.forEach((item) => { const row = item.data(); bonusScores[row.gameId] = Number(row.score) || 0; bonusRecords[row.gameId] = Number(row.record) || 0; });
-  return { user: publicUser(user), missions: missions.map((mission) => publicMission(mission, user.role === "ADMIN")), historyMissions: historyMissions.map((mission) => publicMission(mission)), completed, started, history, bonusCompleted: Object.keys(bonusScores), bonusScores, bonusRecords, badgeDefinitions: badges.map(publicBadge) };
+  const bonusScores = {}; const bonusRecords = {}; const bonusNextRewardAt = {};
+  bonusSnapshot.docs.forEach((item) => {
+    const row = item.data();
+    bonusScores[row.gameId] = Number(row.score) || 0;
+    bonusRecords[row.gameId] = Number(row.record) || 0;
+    const award = dailyBonusAward(row.score, row.lastAwardAt || row.completedAt, 0);
+    if (!award.available) bonusNextRewardAt[row.gameId] = award.nextRewardAt.toISOString();
+  });
+  return { user: publicUser(user), missions: missions.map((mission) => publicMission(mission, user.role === "ADMIN")), historyMissions: historyMissions.map((mission) => publicMission(mission)), completed, started, history, bonusCompleted: Object.keys(bonusScores), bonusScores, bonusRecords, bonusNextRewardAt, badgeDefinitions: badges.map(publicBadge) };
 }
 
 async function enforceRate(key, maximum, minutes) {
@@ -151,7 +156,7 @@ async function loginApi(request) {
 }
 
 async function sessionApi(request) { const user = await requireSession(request.token, secret()); return { ...(await userBundle(user)), token: String(request.token) }; }
-async function missionsApi(request) { const user = await requireSession(request.token, secret()); return { missions: (await allowedMissions(user)).map((mission) => publicMission(mission, user.role === "ADMIN")), uad: user.uad || "" }; }
+async function missionsApi(request) { const user = await requireSession(request.token, secret()); return { missions: (await allowedMissions(user)).map((mission) => publicMission(mission, user.role === "ADMIN")), uad: user.uad || "", scoreResetAt: toIso(user.scoreResetAt) }; }
 
 function progressSheetRow(row) { return { Id: row.id, UsuarioId: row.userId, MisionId: row.missionId, Estado: row.status, IniciadaEn: toIso(row.startedAt), CompletadaEn: toIso(row.completedAt) }; }
 async function startMissionApi(request) {
@@ -211,12 +216,15 @@ async function completeBonusApi(request) {
   const score = clamp(request.score, 0, limits[0], 0); const record = clamp(request.record ?? score, 0, limits[1], 0); const ref = db.collection("bonus").doc(`${user.id}_${gameId}`); let output;
   await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref); const current = snapshot.exists ? snapshot.data() : {};
-    const row = { id: ref.id, userId: user.id, gameId, score: Math.max(Number(current.score) || 0, score), record: Math.max(Number(current.record) || 0, record), completedAt: record > (Number(current.record) || 0) ? now() : current.completedAt || now(), updatedAt: now() };
+    const award = dailyBonusAward(current.score, current.lastAwardAt || current.completedAt, score);
+    const updatedAt = now();
+    const lastAwardAt = award.available ? updatedAt : current.lastAwardAt || current.completedAt || updatedAt;
+    const row = { id: ref.id, userId: user.id, gameId, score: award.totalScore, record: Math.max(Number(current.record) || 0, record), completedAt: award.available ? updatedAt : current.completedAt || updatedAt, lastAwardAt, updatedAt };
     transaction.set(ref, row); if (!user.isLoadTest) sheetQueue(transaction, "Bonus", row.id, bonusSheetRow(row));
-    output = row;
+    output = { row, award };
   });
   invalidateCache("leaderboard");
-  return { gameId, score, bestScore: output.score, bestRecord: output.record, completed: true };
+  return { gameId, score, awardedScore: output.award.awardedScore, totalScore: output.row.score, bestScore: output.row.score, bestRecord: output.row.record, nextRewardAt: output.award.nextRewardAt.toISOString(), completed: true };
 }
 
 async function bonusLeaderboardApi(request) {
@@ -235,6 +243,9 @@ async function bonusLeaderboardApi(request) {
 }
 
 async function sendRecoveryEmail(user, code) {
+  // Nodemailer is only needed during password recovery. Loading it lazily keeps
+  // Firebase function discovery and API cold starts lightweight.
+  const nodemailer = require("nodemailer");
   const host = SMTP_HOST.value(); const account = SMTP_USER.value(); const password = SMTP_PASSWORD.value();
   if (!host || !account || !password) throw new Error("El envío de correo no está configurado. Solicita al administrador un código de respaldo.");
   const transporter = nodemailer.createTransport({ host, port: Number(SMTP_PORT.value()) || 465, secure: Number(SMTP_PORT.value()) === 465, auth: { user: account, pass: password }, pool: true, maxConnections: 5 });
@@ -312,6 +323,26 @@ async function adminDeleteUserApi(request) {
   await db.runTransaction(async (transaction) => { transaction.set(ref, anonymized); transaction.delete(db.collection("userKeys").doc(`cedula_${sha256(current.cedula)}`)); transaction.delete(db.collection("userKeys").doc(`email_${sha256(current.email)}`)); sheetQueue(transaction, "Usuarios", current.id, userSheetRow(anonymized)); }); return { deleted: true };
 }
 async function adminCreateRecoveryCodeApi(request) { await requireAdmin(request.token, secret()); const user = await db.collection("users").doc(String(request.userId)).get(); if (!user.exists || !user.data().active) throw new Error("El usuario ya no está activo."); const code = crypto.randomBytes(5).toString("base64url").toUpperCase().slice(0, 8); const recovery = { id: randomId(), userId: user.id, expiresAt: new Date(Date.now() + 24 * 60 * 60000), attempts: 0, used: false, channel: "ADMIN", createdAt: now() }; recovery.codeHash = recoveryHash(recovery.id, code); await db.collection("recoveries").doc(recovery.id).set(recovery); return { code }; }
+async function adminResetUserScoreApi(request) {
+  const admin = await requireAdmin(request.token, secret()); const userRef = db.collection("users").doc(String(request.userId || "")); const bonusQuery = db.collection("bonus").where("userId", "==", userRef.id); const resetAt = now(); let bonusResults = 0;
+  await db.runTransaction(async (transaction) => {
+    const userSnapshot = await transaction.get(userRef);
+    if (!userSnapshot.exists || !userSnapshot.data().active) throw new Error("El usuario ya no está activo.");
+    const user = { id: userSnapshot.id, ...userSnapshot.data() };
+    if (user.id === admin.id || user.role === "ADMIN") throw new Error("No puedes reiniciar el puntaje de una cuenta administradora.");
+    const bonusSnapshot = await transaction.get(bonusQuery); bonusResults = bonusSnapshot.size;
+    const updatedUser = { ...user, scoreResetAt: resetAt, updatedAt: resetAt };
+    transaction.update(userRef, { scoreResetAt: resetAt, updatedAt: resetAt });
+    sheetQueue(transaction, "Usuarios", user.id, userSheetRow(updatedUser));
+    bonusSnapshot.docs.forEach((item) => {
+      const row = { id: item.id, ...item.data(), score: 0, updatedAt: resetAt };
+      transaction.update(item.ref, { score: 0, updatedAt: resetAt });
+      sheetQueue(transaction, "Bonus", row.id, bonusSheetRow(row));
+    });
+  });
+  invalidateCache("leaderboard");
+  return { userId: userRef.id, points: 0, scoreResetAt: toIso(resetAt), bonusResults };
+}
 async function adminEvidenceDataApi(request) {
   await requireAdmin(request.token, secret());
   const snapshot = await db.collection("evidence").doc(String(request.evidenceId || "")).get();
@@ -332,7 +363,7 @@ async function adminDashboardApi(request) {
 }
 
 async function dispatch(action, request) {
-  const handlers = { catalogs: catalogsApi, register: registerApi, login: loginApi, session: sessionApi, getMissions: missionsApi, startMission: startMissionApi, completeMission: completeMissionApi, updateAvatar: updateAvatarApi, completeBonus: completeBonusApi, getBonusLeaderboard: bonusLeaderboardApi, requestPasswordReset: requestPasswordResetApi, verifyPasswordResetCode: verifyPasswordResetCodeApi, resetPassword: resetPasswordApi, adminCreateMission: adminCreateMissionApi, adminEditMission: adminEditMissionApi, adminDeleteMission: adminDeleteMissionApi, adminCreateBadge: adminCreateBadgeApi, adminEditBadge: adminEditBadgeApi, adminDeleteBadge: adminDeleteBadgeApi, adminEditUser: adminEditUserApi, adminDeleteUser: adminDeleteUserApi, adminCreateRecoveryCode: adminCreateRecoveryCodeApi, adminManageBonusRecord: adminManageBonusRecordApi, adminEvidenceData: adminEvidenceDataApi, adminDashboard: adminDashboardApi, adminReportData: async (value) => { await requireAdmin(value.token, secret()); return buildReport(); } };
+  const handlers = { catalogs: catalogsApi, register: registerApi, login: loginApi, session: sessionApi, getMissions: missionsApi, startMission: startMissionApi, completeMission: completeMissionApi, updateAvatar: updateAvatarApi, completeBonus: completeBonusApi, getBonusLeaderboard: bonusLeaderboardApi, requestPasswordReset: requestPasswordResetApi, verifyPasswordResetCode: verifyPasswordResetCodeApi, resetPassword: resetPasswordApi, adminCreateMission: adminCreateMissionApi, adminEditMission: adminEditMissionApi, adminDeleteMission: adminDeleteMissionApi, adminCreateBadge: adminCreateBadgeApi, adminEditBadge: adminEditBadgeApi, adminDeleteBadge: adminDeleteBadgeApi, adminEditUser: adminEditUserApi, adminDeleteUser: adminDeleteUserApi, adminCreateRecoveryCode: adminCreateRecoveryCodeApi, adminResetUserScore: adminResetUserScoreApi, adminManageBonusRecord: adminManageBonusRecordApi, adminEvidenceData: adminEvidenceDataApi, adminDashboard: adminDashboardApi, adminReportData: async (value) => { await requireAdmin(value.token, secret()); return buildReport(); } };
   if (!handlers[action]) throw new Error("Acción no reconocida."); return handlers[action](request);
 }
 async function dispatchIdempotent(action, request) {
